@@ -1,0 +1,23 @@
+.banner {
+  position: absolute; top: 12px; left: 50%;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px;
+  background: rgba(167,139,250,.1);
+  border: 1px solid var(--design);
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,.4);
+  z-index: 150; white-space: nowrap;
+  animation: fadeIn .2s ease;
+}
+.label { font-size: 11px; font-family: var(--font-mono); color: var(--design); }
+.sep { width: 1px; height: 16px; background: var(--border2); }
+.toolBtn {
+  padding: 4px 10px; border-radius: 4px;
+  border: 1px solid var(--border2); background: transparent;
+  color: var(--text3); font-family: var(--font-mono);
+  font-size: 10px; cursor: pointer; transition: all .12s;
+}
+.toolBtn:hover { border-color: var(--design); color: var(--design); }
+.active { border-color: var(--design) !important; color: var(--design) !important; background: rgba(167,139,250,.18) !important; }
+.hint { font-size: 10px; color: var(--text3); font-family: var(--font-mono); margin-left: 4px; }

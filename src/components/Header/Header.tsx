@@ -1,0 +1,426 @@
+/**
+ * components/Header/Header.tsx — Top navigation bar for FlowGraph.
+ *
+ * Contains: logo, file loader, search bar, status chip, view toggle,
+ * saved layouts dropdown, design mode button, save JSON button, and action buttons.
+ *
+ * Button mapping (matches original HTML exactly):
+ *   ☰  — toggle owner-filter sidebar
+ *   ▣  — toggle inspector pane
+ *   ?  — open AI Prompt / JSON spec modal  (original btn-help behaviour)
+ *   ↺  — reset layout
+ *   ⊞  — fit to screen
+ */
+
+import React, { useRef, useState, useEffect, useCallback } from 'react';
+import { useGraphStore } from '../../store/graphStore';
+import { exportGraphToJson } from '../../utils/exportJson';
+import type { SavedLayout } from '../../types/graph';
+import styles from './Header.module.css';
+
+export function Header() {
+  const {
+    allNodes, allEdges, visibleNodes, viewMode, designMode, designDirty,
+    setViewMode, setDesignMode, loadData, rebuildGraph,
+    saveNamedLayout, loadNamedLayout, fitToScreen,
+    setSelectedNode, setLastJumpedNode, positions, setTransform, transform,
+    activeOwners, toggleOwner, layoutCache,
+  } = useGraphStore();
+
+  // ── Local UI state ────────────────────────────────────────────────────
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<typeof allNodes>([]);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [layoutsOpen, setLayoutsOpen] = useState(false);
+  const [layoutName, setLayoutName] = useState('');
+  const [savedLayouts, setSavedLayouts] = useState<SavedLayout[]>([]);
+
+  // Modal open flag — numeric counter so every button click triggers the effect.
+  const [guidePulse, setGuidePulse] = useState(0);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const layoutsRef = useRef<HTMLDivElement>(null);
+
+  // ── Load saved layouts from localStorage on mount / dropdown open ─────
+  useEffect(() => {
+    const raw = localStorage.getItem('flowgraph-layouts');
+    if (raw) {
+      try { setSavedLayouts(JSON.parse(raw)); } catch { /* ignore corrupt data */ }
+    }
+  }, [layoutsOpen]);
+
+  // ── Modal event dispatch — increment-counter pattern ──────────────────
+  useEffect(() => {
+    if (guidePulse === 0) return;
+    document.dispatchEvent(new CustomEvent('flowgraph:open-guide'));
+  }, [guidePulse]);
+
+  // ── Global keyboard shortcuts ─────────────────────────────────────────
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+      if (e.key === 'Escape') {
+        setShowSearchResults(false);
+        setLayoutsOpen(false);
+      }
+      // Shift+? opens the user guide (matches original HTML behaviour)
+      if (e.shiftKey && e.key === '?') {
+        setGuidePulse((n) => n + 1);
+      }
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, []);
+
+  // ── Close layouts dropdown when clicking outside ──────────────────────
+  useEffect(() => {
+    function handleOutsideClick(e: MouseEvent) {
+      if (layoutsRef.current && !layoutsRef.current.contains(e.target as Node)) {
+        setLayoutsOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
+
+  // ── File load handler ─────────────────────────────────────────────────
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      let parsed: unknown;
+      try { parsed = JSON.parse(text); } catch {
+        alert('Invalid JSON file. Make sure the file is valid JSON.');
+        return;
+      }
+
+      // Support both legacy format (plain array) and layout-aware format ({nodes, _layout})
+      let rawNodes: unknown[];
+      let savedLayout: { positions: Record<string, { x: number; y: number }>; transform: { x: number; y: number; k: number }; viewMode?: string } | null = null;
+
+      if (Array.isArray(parsed)) {
+        rawNodes = parsed;
+      } else if (parsed && typeof parsed === 'object' && Array.isArray((parsed as Record<string, unknown>).nodes)) {
+        const obj = parsed as Record<string, unknown>;
+        rawNodes = obj.nodes as unknown[];
+        savedLayout = (obj._layout as typeof savedLayout) ?? null;
+      } else {
+        alert('JSON must be an array of nodes or an object with a "nodes" array.');
+        return;
+      }
+
+      const nodes = (rawNodes as Record<string, unknown>[]).map((raw) => ({
+        id: String(raw.id ?? ''),
+        name: String(raw.name ?? raw.id ?? 'Unnamed'),
+        owner: String(raw.owner ?? 'Unknown'),
+        description: String(raw.description ?? ''),
+        dependencies: Array.isArray(raw.dependencies) ? raw.dependencies.map(String) : [],
+      }));
+
+      loadData(nodes, savedLayout);
+      // Only auto-fit if no saved layout (saved layout provides its own transform)
+      if (!savedLayout) setTimeout(() => fitToScreen(), 100);
+    } catch (err) {
+      alert(`Failed to load file: ${(err as Error).message}`);
+    }
+    e.target.value = '';
+  }
+
+  // ── Search handler ────────────────────────────────────────────────────
+  const handleSearch = useCallback((query: string) => {
+    setSearchQuery(query);
+    if (!query.trim()) {
+      setSearchResults([]);
+      setShowSearchResults(false);
+      return;
+    }
+    const lower = query.toLowerCase();
+    const results = visibleNodes.filter(
+      (node) =>
+        node.name.toLowerCase().includes(lower) ||
+        node.id.toLowerCase().includes(lower) ||
+        node.owner.toLowerCase().includes(lower) ||
+        node.description.toLowerCase().includes(lower)
+    ).slice(0, 8);
+    setSearchResults(results);
+    setShowSearchResults(results.length > 0);
+  }, [visibleNodes]);
+
+  // ── Jump to node when a search result is clicked ──────────────────────
+  /**
+   * handleJumpToNode — centers the viewport on the target node and triggers
+   * the pulsing amber glow.
+   *
+   * If the node's owner is currently filtered out, we activate that owner
+   * first (matching the original HTML behaviour) so the node is visible.
+   */
+  function handleJumpToNode(nodeId: string) {
+    setShowSearchResults(false);
+    setSearchQuery('');
+
+    const node = allNodes.find((n) => n.id === nodeId);
+    if (!node) return;
+
+    // Make the owner visible if it was filtered out
+    if (!activeOwners.has(node.owner)) {
+      toggleOwner(node.owner);
+    }
+
+    setSelectedNode(nodeId);
+
+    // Read the latest positions from the store (may have changed after toggleOwner)
+    const latestPositions = useGraphStore.getState().positions;
+    const pos = latestPositions[nodeId];
+    if (!pos) return;
+
+    const canvasEl = document.getElementById('canvas-wrap');
+    if (!canvasEl) return;
+    const { width: canvasW, height: canvasH } = canvasEl.getBoundingClientRect();
+    const NODE_W = 180, NODE_H = 72;
+    // Fly to the node at a comfortable 75% zoom regardless of current zoom level
+    const targetScale = 0.75;
+    const newX = canvasW / 2 - (pos.x + NODE_W / 2) * targetScale;
+    const newY = canvasH / 2 - (pos.y + NODE_H / 2) * targetScale;
+    setTransform({ x: newX, y: newY, k: targetScale });
+
+    // Trigger the pulsing glow — stays until a different node is selected
+    setLastJumpedNode(nodeId);
+  }
+
+  // ── Saved layout handlers ─────────────────────────────────────────────
+  function handleSaveLayout() {
+    if (!layoutName.trim()) return;
+    saveNamedLayout(layoutName.trim());
+    setLayoutName('');
+    const raw = localStorage.getItem('flowgraph-layouts');
+    if (raw) setSavedLayouts(JSON.parse(raw));
+  }
+
+  function handleDeleteLayout(index: number) {
+    const updated = savedLayouts.filter((_, i) => i !== index);
+    setSavedLayouts(updated);
+    localStorage.setItem('flowgraph-layouts', JSON.stringify(updated));
+  }
+
+  // ── Design mode toggle ────────────────────────────────────────────────
+  function handleDesignToggle() {
+    setDesignMode(!designMode);
+  }
+
+  const hasData = allNodes.length > 0;
+
+  return (
+    <header className={styles.header}>
+      {/* Logo */}
+      <div className={styles.logo}>
+        <div className={styles.logoIcon}>⬡</div>
+        FlowGraph
+      </div>
+      <div className={styles.sep} />
+
+      {/* File loader */}
+      <label className={styles.btnUpload} title="Load a JSON file">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        Browse JSON File
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json"
+          onChange={handleFileChange}
+          className={styles.fileInput}
+        />
+      </label>
+
+      {/* Search */}
+      <div className={styles.searchWrap}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" strokeWidth="2">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+        </svg>
+        <input
+          ref={searchInputRef}
+          className={styles.searchInput}
+          type="text"
+          placeholder="Search nodes… (⌘K)"
+          value={searchQuery}
+          onChange={(e) => handleSearch(e.target.value)}
+          onFocus={() => searchQuery && setShowSearchResults(true)}
+          onKeyDown={(e) => e.key === 'Escape' && setShowSearchResults(false)}
+        />
+        {showSearchResults && (
+          <div className={styles.searchResults}>
+            {searchResults.map((node) => (
+              <div
+                key={node.id}
+                className={styles.searchItem}
+                onMouseDown={() => handleJumpToNode(node.id)}
+              >
+                <span className={styles.searchItemName}>{node.name}</span>
+                <span className={styles.searchItemId}>#{node.id} · {node.owner}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Right-side toolbar */}
+      <div className={styles.toolbarRight}>
+
+        {/* Status chip */}
+        <div className={styles.statusChip}>
+          {hasData
+            ? <><span>{allNodes.length}</span> nodes · <span>{allEdges.length}</span> edges</>
+            : 'No data loaded'
+          }
+          {designDirty && <span className={styles.unsavedDot} title="Unsaved changes">●</span>}
+        </div>
+
+        {/* DAG / LANES view toggle */}
+        <div className={styles.viewToggle}>
+          <button
+            className={`${styles.viewBtn} ${viewMode === 'dag' ? styles.viewBtnActive : ''}`}
+            onClick={() => setViewMode('dag')}
+            title="Free DAG layout — nodes arranged left-to-right by dependency depth"
+          >DAG</button>
+          <button
+            className={`${styles.viewBtn} ${viewMode === 'lanes' ? styles.viewBtnActive : ''}`}
+            onClick={() => setViewMode('lanes')}
+            title="Swim lane layout — nodes grouped horizontally by owner"
+          >LANES</button>
+        </div>
+
+        {/* Saved Layouts dropdown */}
+        <div className={styles.layoutsWrap} ref={layoutsRef}>
+          <button
+            className={`${styles.btnLayouts} ${layoutsOpen ? styles.btnLayoutsOpen : ''}`}
+            onClick={() => setLayoutsOpen(!layoutsOpen)}
+            title="Save and restore named layouts"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+              <polyline points="17 21 17 13 7 13 7 21"/>
+              <polyline points="7 3 7 8 15 8"/>
+            </svg>
+            Layouts
+          </button>
+          {layoutsOpen && (
+            <div className={styles.layoutsDropdown}>
+              <div className={styles.layoutsSaveRow}>
+                <input
+                  className={styles.layoutsInput}
+                  placeholder="Name this layout…"
+                  value={layoutName}
+                  onChange={(e) => setLayoutName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSaveLayout()}
+                  maxLength={40}
+                  autoFocus
+                />
+                <button className={styles.layoutsSaveBtn} onClick={handleSaveLayout}>SAVE</button>
+              </div>
+              <div className={styles.layoutsList}>
+                {savedLayouts.length === 0
+                  ? <div className={styles.layoutsEmpty}>No saved layouts yet</div>
+                  : savedLayouts.map((layout, index) => (
+                    <div key={index} className={styles.layoutItem} onClick={() => {
+                      loadNamedLayout(layout.snapshot, layout.viewMode);
+                      setLayoutsOpen(false);
+                    }}>
+                      <span className={styles.layoutItemIcon}>
+                        {layout.viewMode === 'lanes' ? '▤' : '◫'}
+                      </span>
+                      <div className={styles.layoutItemInfo}>
+                        <div className={styles.layoutItemName}>{layout.name}</div>
+                        <div className={styles.layoutItemMeta}>
+                          {layout.viewMode.toUpperCase()} · {new Date(layout.savedAt).toLocaleDateString()}
+                        </div>
+                      </div>
+                      <button
+                        className={styles.layoutItemDelete}
+                        onClick={(e) => { e.stopPropagation(); handleDeleteLayout(index); }}
+                        title="Delete this layout"
+                      >✕</button>
+                    </div>
+                  ))
+                }
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Save JSON — visible whenever data is loaded; always captures current layout */}
+        {hasData && (
+          <button
+            className={`${styles.btnSaveJson} ${!designDirty ? styles.btnSaveJsonQuiet : ''}`}
+            title={designDirty ? 'Download JSON with unsaved changes' : 'Download JSON with current layout'}
+            onClick={() => {
+              // Merge the current view's live positions/transform with the cache for the other view
+              const dagLayout   = viewMode === 'dag'
+                ? { positions, transform }
+                : (layoutCache['dag']   ?? null);
+              const lanesLayout = viewMode === 'lanes'
+                ? { positions, transform }
+                : (layoutCache['lanes'] ?? null);
+              exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout);
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Save JSON
+          </button>
+        )}
+
+        {/* Design mode toggle */}
+        <button
+          className={`${styles.btnDesign} ${designMode ? styles.btnDesignActive : ''}`}
+          title="Toggle Design Mode — add nodes, draw connections, edit graph"
+          onClick={handleDesignToggle}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 20h9"/>
+            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+          </svg>
+          Design
+        </button>
+
+        {/* 📖 — How-to User Guide */}
+        <button
+          className={styles.btnIcon}
+          title="How to use FlowGraph (Shift+?)"
+          onClick={() => setGuidePulse((n) => n + 1)}
+        >📖</button>
+
+        {/* ↺ — Reset layout (recompute positions from scratch) */}
+        <button
+          className={styles.btnIcon}
+          title="Reset layout — recalculate positions from scratch"
+          onClick={() => { rebuildGraph(); setTimeout(() => fitToScreen(), 50); }}
+        >↺</button>
+
+        {/* ▣ — Toggle inspector pane */}
+        <button
+          className={styles.btnIcon}
+          title="Toggle inspector"
+          onClick={() => document.dispatchEvent(new CustomEvent('flowgraph:toggle-inspector'))}
+        >▣</button>
+
+        {/* ⊞ — Fit graph to screen */}
+        <button
+          className={styles.btnIcon}
+          title="Fit graph to screen"
+          onClick={() => fitToScreen()}
+        >⊞</button>
+
+      </div>
+    </header>
+  );
+}

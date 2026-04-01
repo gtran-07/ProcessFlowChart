@@ -1,0 +1,56 @@
+.overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.6); backdrop-filter: blur(4px);
+  z-index: 600; display: flex; align-items: center; justify-content: center;
+}
+.modal {
+  background: var(--surface); border: 1px solid var(--design);
+  border-radius: 10px; width: 440px; max-width: 92vw;
+  box-shadow: 0 24px 80px rgba(0,0,0,.7);
+  animation: modalIn .15s ease;
+  display: flex; flex-direction: column;
+}
+.header {
+  padding: 16px 18px 12px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px;
+}
+.icon { font-size: 18px; }
+.title { font-family: var(--font-display); font-size: 14px; font-weight: 800; color: var(--text); flex: 1; }
+.closeBtn { background: none; border: none; color: var(--text3); font-size: 18px; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+.closeBtn:hover { color: var(--text); background: var(--surface2); }
+.body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.label { font-size: 9px; font-weight: 600; letter-spacing: 1.2px; color: var(--text3); text-transform: uppercase; }
+.fieldHint { font-size: 10px; color: var(--text3); margin-top: 2px; }
+.input, .textarea {
+  padding: 8px 11px; background: var(--bg3);
+  border: 1px solid var(--border2); border-radius: 6px;
+  color: var(--text); font-family: var(--font-mono); font-size: 11.5px;
+  outline: none; transition: border-color .15s; width: 100%;
+}
+.input:focus, .textarea:focus { border-color: var(--design); }
+.textarea { resize: vertical; line-height: 1.6; }
+.footer {
+  padding: 12px 18px; border-top: 1px solid var(--border);
+  display: flex; justify-content: flex-end; gap: 8px;
+}
+.deleteBtn {
+  padding: 7px 14px; border-radius: 5px; margin-right: auto;
+  border: 1px solid rgba(248,113,113,.4); background: transparent;
+  color: #f87171; font-family: var(--font-mono); font-size: 11px; cursor: pointer;
+  transition: all .12s;
+}
+.deleteBtn:hover { background: rgba(248,113,113,.13); }
+.cancelBtn {
+  padding: 7px 14px; border-radius: 5px;
+  border: 1px solid var(--border2); background: transparent;
+  color: var(--text3); font-family: var(--font-mono); font-size: 11px; cursor: pointer;
+}
+.cancelBtn:hover { border-color: var(--text3); color: var(--text); }
+.saveBtn {
+  padding: 7px 16px; border-radius: 5px;
+  border: 1px solid var(--design); background: rgba(167,139,250,.15);
+  color: var(--design); font-family: var(--font-mono); font-size: 11px; font-weight: 700; cursor: pointer;
+  transition: all .12s;
+}
+.saveBtn:hover { background: rgba(167,139,250,.28); color: #fff; }

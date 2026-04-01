@@ -1,0 +1,65 @@
+.sidebar {
+  width: 220px; flex-shrink: 0;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  transition: width .2s;
+}
+.collapsed { width: 0; border-right: none; }
+.header {
+  padding: 12px 14px 8px;
+  font-size: 9px; font-weight: 600;
+  letter-spacing: 1.5px; color: var(--text3);
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 6px;
+  flex-shrink: 0;
+}
+.allBtn, .collapseBtn {
+  background: transparent; border: 1px solid var(--border);
+  border-radius: 3px; color: var(--text3);
+  font-family: var(--font-mono); font-size: 9px;
+  padding: 2px 6px; cursor: pointer;
+  transition: all .12s;
+}
+.allBtn:hover, .collapseBtn:hover { border-color: var(--accent); color: var(--accent); }
+.collapseBtn { margin-left: auto; }
+.filterScroll { overflow-y: auto; flex: 1; padding: 8px 0; }
+.empty { padding: 16px; font-size: 11px; color: var(--text3); text-align: center; }
+.filterItem {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 14px; cursor: pointer;
+  transition: background .1s; font-size: 11px; color: var(--text2);
+}
+.filterItem:hover { background: var(--surface); }
+.checkBox {
+  width: 13px; height: 13px;
+  border: 1.5px solid var(--border2); border-radius: 3px;
+  flex-shrink: 0; transition: all .15s;
+}
+.checked .checkBox {
+  background: var(--accent); border-color: var(--accent);
+  position: relative;
+}
+.checked .checkBox::after {
+  content: '✓'; position: absolute;
+  top: -2px; left: 1px;
+  font-size: 10px; color: #fff; font-weight: 700;
+}
+.ownerDot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.checkLabel { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.checkLabelBold { font-weight: 600; color: var(--text); }
+.filterCount { font-size: 9px; color: var(--text3); margin-left: auto; }
+.sep { height: 1px; background: var(--border); margin: 4px 12px; }
+.peekBtn {
+  position: absolute; top: 14px; left: 14px; z-index: 120;
+  width: 32px; height: 32px; border-radius: 8px;
+  background: rgba(14,17,23,.92); border: 1px solid var(--border);
+  color: var(--text2); cursor: pointer;
+  box-shadow: 0 10px 30px rgba(0,0,0,.45);
+  transition: all .15s;
+}
+.peekBtn:hover { border-color: var(--accent); color: var(--accent); }

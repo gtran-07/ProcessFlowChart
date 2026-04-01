@@ -1,0 +1,20 @@
+/**
+ * App.module.css — Layout styles for the root App component.
+ */
+
+.appRoot {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.appBody {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative; /* Scopes absolute children (e.g. sidebar peek button) to the body area */
+  /* flex-row: sidebar | canvas | inspector */
+}
