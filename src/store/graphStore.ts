@@ -109,7 +109,12 @@ export interface GraphStore {
   undo: () => void;
   redo: () => void;
 
+  /** Name of the currently-loaded JSON file, or null if no file is loaded */
+  currentFileName: string | null;
+
   // ── Actions ───────────────────────────────────────────────────────────────
+  /** clearGraph — resets all graph data and enters design mode for a fresh start */
+  clearGraph: () => void;
   loadData: (nodes: GraphNode[], savedLayout?: {
     currentView?: string;
     dag?:   { positions: Record<string, Position>; transform: Transform } | null;
@@ -118,7 +123,7 @@ export interface GraphStore {
     positions?: Record<string, Position>;
     transform?: Transform;
     viewMode?: string;
-  } | null) => void;
+  } | null, fileName?: string | null) => void;
   addNode: (node: GraphNode, clickPosition: Position) => void;
   updateNode: (id: string, changes: Partial<Omit<GraphNode, 'id'>>) => void;
   deleteNode: (id: string) => void;
@@ -241,6 +246,37 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   designDirty: false,
   undoStack: [],
   redoStack: [],
+  currentFileName: null,
+
+  // ── clearGraph ────────────────────────────────────────────────────────────
+  clearGraph: () => {
+    set({
+      allNodes: [],
+      allEdges: [],
+      visibleNodes: [],
+      visibleEdges: [],
+      positions: {},
+      laneMetrics: {},
+      activeOwners: new Set(),
+      ownerColors: {},
+      viewMode: 'dag',
+      layoutCache: {},
+      selectedNodeId: null,
+      hoveredNodeId: null,
+      lastJumpedNodeId: null,
+      focusMode: false,
+      focusNodeId: null,
+      preFocusSnapshot: null,
+      transform: { x: 0, y: 0, k: 1 },
+      designMode: true,
+      designTool: 'select',
+      connectSourceId: null,
+      designDirty: false,
+      undoStack: [],
+      redoStack: [],
+      currentFileName: null,
+    });
+  },
 
   // ── loadData ─────────────────────────────────────────────────────────────
 
@@ -250,7 +286,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
    * Called when the user loads a JSON file. Resets all state (layout cache,
    * focus mode, design mode, etc.) and computes a fresh layout.
    */
-  loadData: (nodes, savedLayout) => {
+  loadData: (nodes, savedLayout, fileName) => {
     const allEdges = rebuildEdgesFromNodes(nodes);
     const owners = [...new Set(nodes.map((node) => node.owner))];
     const ownerColors = assignOwnerColors(owners);
@@ -312,6 +348,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       undoStack: [],
       redoStack: [],
       transform: activeLayout ? activeLayout.transform : { x: 0, y: 0, k: 1 },
+      currentFileName: fileName ?? null,
     });
   },
 

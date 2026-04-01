@@ -31,7 +31,7 @@ export function Canvas() {
     designMode, designTool, connectSourceId, setConnectSource,
     addEdge, addNode, setSelectedNode,
     allNodes, ownerColors, laneMetrics, viewMode,
-    enterFocusMode, hoveredNodeId, fitToScreen,
+    enterFocusMode, hoveredNodeId, fitToScreen, clearGraph,
   } = useGraphStore();
 
   // ── Refs ──────────────────────────────────────────────────────────────
@@ -245,9 +245,31 @@ export function Canvas() {
       {!hasData && (
         <div className={styles.emptyState}>
           <div className={styles.emptyIcon}>⬡</div>
-          <div className={styles.emptyTitle}>No Graph Loaded</div>
-          <div className={styles.emptySub}>
-            Upload a JSON file to visualize<br />your dependency graph
+          <div className={styles.emptyTitle}>FlowGraph</div>
+          <div className={styles.emptySub}>Visualize and edit dependency graphs</div>
+          <div className={styles.emptyActions}>
+            <button
+              className={styles.emptyActionBtn}
+              onClick={() => document.dispatchEvent(new CustomEvent('flowgraph:open-file-picker'))}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              <span className={styles.emptyActionLabel}>Load JSON File</span>
+              <span className={styles.emptyActionHint}>Open an existing flowchart</span>
+            </button>
+            <div className={styles.emptyOr}>or</div>
+            <button
+              className={`${styles.emptyActionBtn} ${styles.emptyActionBtnDesign}`}
+              onClick={() => clearGraph()}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              <span className={styles.emptyActionLabel}>New Flowchart</span>
+              <span className={styles.emptyActionHint}>Start from scratch in design mode</span>
+            </button>
           </div>
         </div>
       )}

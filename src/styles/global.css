@@ -110,20 +110,19 @@ body {
  * Using a CSS class (instead of an inline `filter` style) allows the animation
  * to run — inline styles cannot reference CSS keyframe animations.
  */
+/**
+ * jumpGlowPulse — targets the node-main-rect inside the jumped node.
+ * Uses stroke instead of filter: drop-shadow to avoid the black-rectangle
+ * GPU compositing artifact that SVG filters produce on large graphs.
+ */
 @keyframes jumpGlowPulse {
-  0% {
-    filter: drop-shadow(0 0 6px rgba(245, 158, 11, 0.30));
-  }
-  50% {
-    filter: drop-shadow(0 0 16px rgba(245, 158, 11, 0.70));
-  }
-  100% {
-    filter: drop-shadow(0 0 6px rgba(245, 158, 11, 0.30));
-  }
+  0%   { stroke: rgba(245, 158, 11, 0.40); stroke-width: 1.5; }
+  50%  { stroke: rgba(245, 158, 11, 0.90); stroke-width: 2.5; }
+  100% { stroke: rgba(245, 158, 11, 0.40); stroke-width: 1.5; }
 }
 
 /** Applied to the node <g> element while lastJumpedNodeId matches this node. */
-.node-jumped {
+.node-jumped .node-main-rect {
   animation: jumpGlowPulse 1.2s ease-in-out infinite;
 }
 
@@ -137,6 +136,7 @@ body {
  */
 .node-group {
   transition: opacity .18s ease, transform .35s cubic-bezier(.4,0,.2,1);
+  will-change: opacity;
 }
 /* Suppress transform transition while actively dragging — avoids rubber-band lag */
 .node-group.node-dragging {

@@ -25,33 +25,78 @@
 .svgCanvas {
   position: absolute; top: 0; left: 0;
   width: 100%; height: 100%;
-  overflow: visible;
+  overflow: hidden;
   user-select: none;
 }
 
-/* Empty state */
+/* Empty state / landing screen */
 .emptyState {
   position: absolute; inset: 0;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
-  gap: 14px;
+  gap: 10px;
   pointer-events: none;
   z-index: 1;
 }
 .emptyIcon {
-  width: 60px; height: 60px;
-  border: 2px dashed var(--border2);
-  border-radius: 12px;
+  width: 56px; height: 56px;
+  background: linear-gradient(135deg, rgba(79,158,255,.15), rgba(123,94,167,.15));
+  border: 1px solid var(--border2);
+  border-radius: 14px;
   display: flex; align-items: center; justify-content: center;
-  color: var(--text3); font-size: 26px;
+  color: var(--accent); font-size: 24px;
+  margin-bottom: 4px;
 }
 .emptyTitle {
   font-family: var(--font-display);
-  font-size: 17px; font-weight: 700; color: var(--text2);
+  font-size: 20px; font-weight: 800; color: var(--text);
+  letter-spacing: -0.5px;
 }
 .emptySub {
   font-size: 11px; color: var(--text3);
   text-align: center; line-height: 1.7;
+  margin-bottom: 8px;
+}
+.emptyActions {
+  display: flex; align-items: center; gap: 10px;
+  pointer-events: all;
+  margin-top: 6px;
+}
+.emptyOr {
+  font-size: 10px; color: var(--text3);
+  flex-shrink: 0;
+}
+.emptyActionBtn {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 6px;
+  padding: 18px 28px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  color: var(--text2);
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: all .18s;
+  width: 160px;
+  text-align: center;
+}
+.emptyActionBtn:hover {
+  border-color: var(--accent);
+  background: rgba(79,158,255,.07);
+  color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(0,0,0,.3);
+}
+.emptyActionBtnDesign:hover {
+  border-color: var(--design) !important;
+  background: rgba(167,139,250,.07) !important;
+  color: var(--design) !important;
+}
+.emptyActionLabel {
+  font-size: 12px; font-weight: 700;
+}
+.emptyActionHint {
+  font-size: 10px; color: var(--text3); line-height: 1.4;
 }
 
 /* Focus mode banner */

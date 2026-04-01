@@ -21,10 +21,10 @@ import styles from './Header.module.css';
 export function Header() {
   const {
     allNodes, allEdges, visibleNodes, viewMode, designMode, designDirty,
-    setViewMode, setDesignMode, loadData, rebuildGraph,
+    setViewMode, setDesignMode, loadData, rebuildGraph, clearGraph,
     saveNamedLayout, loadNamedLayout, fitToScreen,
     setSelectedNode, setLastJumpedNode, positions, setTransform, transform,
-    activeOwners, toggleOwner, layoutCache,
+    activeOwners, toggleOwner, layoutCache, currentFileName,
   } = useGraphStore();
 
   // ── Local UI state ────────────────────────────────────────────────────
@@ -55,6 +55,15 @@ export function Header() {
     if (guidePulse === 0) return;
     document.dispatchEvent(new CustomEvent('flowgraph:open-guide'));
   }, [guidePulse]);
+
+  // ── Allow Canvas empty state to trigger the file picker ──────────────
+  useEffect(() => {
+    function handleOpenFilePicker() {
+      fileInputRef.current?.click();
+    }
+    document.addEventListener('flowgraph:open-file-picker', handleOpenFilePicker);
+    return () => document.removeEventListener('flowgraph:open-file-picker', handleOpenFilePicker);
+  }, []);
 
   // ── Global keyboard shortcuts ─────────────────────────────────────────
   useEffect(() => {
@@ -122,7 +131,7 @@ export function Header() {
         dependencies: Array.isArray(raw.dependencies) ? raw.dependencies.map(String) : [],
       }));
 
-      loadData(nodes, savedLayout);
+      loadData(nodes, savedLayout, file.name);
       // Only auto-fit if no saved layout (saved layout provides its own transform)
       if (!savedLayout) setTimeout(() => fitToScreen(), 100);
     } catch (err) {
@@ -229,7 +238,7 @@ export function Header() {
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
           <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
         </svg>
-        Browse JSON File
+        {currentFileName ? 'Load JSON' : 'Browse JSON File'}
         <input
           ref={fileInputRef}
           type="file"
@@ -238,6 +247,32 @@ export function Header() {
           className={styles.fileInput}
         />
       </label>
+
+      {/* Current file name chip */}
+      {currentFileName && (
+        <div className={styles.fileChip} title={currentFileName}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
+          <span className={styles.fileChipName}>{currentFileName}</span>
+        </div>
+      )}
+
+      {/* New flowchart button */}
+      <button
+        className={styles.btnNew}
+        title="New flowchart — clears the current graph and enters design mode"
+        onClick={() => {
+          if (allNodes.length > 0 && !window.confirm('Start a new flowchart? Unsaved changes will be lost.')) return;
+          clearGraph();
+        }}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        New
+      </button>
 
       {/* Search */}
       <div className={styles.searchWrap}>

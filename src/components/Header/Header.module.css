@@ -244,6 +244,44 @@
 .layoutItem:hover .layoutItemDelete { opacity: 1; }
 .layoutItemDelete:hover { color: #f87171; background: rgba(248,113,113,.1); }
 
+/* Current file name chip */
+.fileChip {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 10px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  max-width: 180px;
+  flex-shrink: 1;
+  min-width: 0;
+}
+.fileChipName {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text2);
+}
+
+/* New flowchart button */
+.btnNew {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  color: var(--text2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.btnNew:hover { border-color: var(--accent); color: var(--accent); background: rgba(79,158,255,.07); }
+
 /* Icon buttons */
 .btnIcon {
   width: 28px; height: 28px;
