@@ -12,10 +12,8 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  // base: '/' serves the app at the domain root.
-  // Works for GitHub user/org pages (username.github.io) and custom domains.
-  // If deploying to a project page (username.github.io/repo-name), change this to '/repo-name/'.
-  base: '/',
+  // Deployed at https://gtran-07.github.io/ProcessFlowChart/
+  base: '/ProcessFlowChart/',
   build: {
     outDir: 'dist',
     sourcemap: true,
