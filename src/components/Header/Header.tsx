@@ -208,8 +208,10 @@ export function Header() {
   // ── Export PDF ───────────────────────────────────────────────────────────
   const handleExportPdf = useCallback((mode: 'current' | 'full') => {
     setSaveMenuOpen(false);
-    exportToPdf(mode, positions, undefined, undefined, undefined, viewMode);
-  }, [positions, viewMode]);
+    const nodeOwnerMap: Record<string, string> = {};
+    allNodes.forEach((n) => { nodeOwnerMap[n.id] = n.owner; });
+    exportToPdf(mode, positions, ownerColors, nodeOwnerMap, undefined, viewMode);
+  }, [positions, ownerColors, allNodes, viewMode]);
 
   // ── Global keyboard shortcuts ─────────────────────────────────────────
   useEffect(() => {

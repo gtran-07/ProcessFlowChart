@@ -151,35 +151,50 @@ function injectBackgroundAndGrid(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Black arrow marker — injected directly into <svg>, not a nested <g>
+// Per-color arrowhead markers + edge colorization
 // ─────────────────────────────────────────────────────────────────────────────
 
-function injectBlackArrow(svgEl: SVGSVGElement): SVGDefsElement {
+/**
+ * Inject one dedicated arrowhead marker per unique owner color into a <defs>
+ * element that is a DIRECT child of <svg>.
+ *
+ * Why not use #arrow-dyn (fill="currentColor")?
+ * currentColor is a CSS inheritance concept. SVG markers are rendered in their
+ * own viewport and do not inherit CSS color from the referencing element during
+ * print / PDF export — it resolves to the initial value (black on screen but
+ * often grey/transparent in PDF renderers).
+ *
+ * By hard-coding the fill hex directly into each marker's <polygon>, the color
+ * is baked into the SVG and always renders correctly.
+ *
+ * Marker IDs: "arrow-pdf-" + hex digits (# stripped), e.g. "arrow-pdf-4f9eff".
+ */
+function injectColorMarkers(
+  svgEl: SVGSVGElement,
+  colors: Set<string>
+): SVGDefsElement {
   const defs = document.createElementNS(SVG_NS, 'defs') as SVGDefsElement;
-  defs.id = 'pdf-arrow-defs';
+  defs.id = 'pdf-color-markers';
 
-  const mk = document.createElementNS(SVG_NS, 'marker') as SVGMarkerElement;
-  mk.setAttribute('id',           'arrow-pdf-black');
-  mk.setAttribute('markerWidth',  '8');
-  mk.setAttribute('markerHeight', '6');
-  mk.setAttribute('refX',         '7');
-  mk.setAttribute('refY',         '3');
-  mk.setAttribute('orient',       'auto');
+  colors.forEach((color) => {
+    const mk = document.createElementNS(SVG_NS, 'marker') as SVGMarkerElement;
+    mk.setAttribute('id',           `arrow-pdf-${color.replace('#', '')}`);
+    mk.setAttribute('markerWidth',  '8');
+    mk.setAttribute('markerHeight', '6');
+    mk.setAttribute('refX',         '7');
+    mk.setAttribute('refY',         '3');
+    mk.setAttribute('orient',       'auto');
+    const poly = document.createElementNS(SVG_NS, 'polygon');
+    poly.setAttribute('points', '0 0, 8 3, 0 6');
+    poly.setAttribute('fill', color);   // hard-coded hex — no CSS inheritance
+    mk.appendChild(poly);
+    defs.appendChild(mk);
+  });
 
-  const poly = document.createElementNS(SVG_NS, 'polygon');
-  poly.setAttribute('points', '0 0, 8 3, 0 6');
-  poly.setAttribute('fill', '#222222');
-  mk.appendChild(poly);
-  defs.appendChild(mk);
-
-  // Must be a direct child of <svg> — not inside any <g>
+  // Must be a direct child of <svg>, never inside a <g>
   svgEl.insertBefore(defs, svgEl.firstChild);
   return defs;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Edge override
-// ─────────────────────────────────────────────────────────────────────────────
 
 type EdgeSnap = {
   el: SVGPathElement;
@@ -188,9 +203,20 @@ type EdgeSnap = {
   styleColor: string; styleTransition: string;
 };
 
-function blackenEdges(svgEl: SVGSVGElement): EdgeSnap[] {
+function colorizeEdges(
+  svgEl: SVGSVGElement,
+  ownerColors: Record<string, string>,
+  nodeOwnerMap: Record<string, string>
+): { snaps: EdgeSnap[]; usedColors: Set<string> } {
   const snaps: EdgeSnap[] = [];
+  const usedColors = new Set<string>();
+
   svgEl.querySelectorAll<SVGPathElement>('.edge-vis').forEach((path) => {
+    const fromId = path.parentElement?.getAttribute('data-edge-from') ?? '';
+    const owner  = nodeOwnerMap[fromId] ?? '';
+    const color  = ownerColors[owner]   ?? '#4f9eff';
+    usedColors.add(color);
+
     snaps.push({
       el: path,
       stroke:          path.getAttribute('stroke'),
@@ -200,13 +226,15 @@ function blackenEdges(svgEl: SVGSVGElement): EdgeSnap[] {
       styleColor:      path.style.color,
       styleTransition: path.style.transition,
     });
-    path.setAttribute('stroke',       '#222222');
-    path.setAttribute('stroke-width', '1.5');
+
+    path.setAttribute('stroke',       color);
+    path.setAttribute('stroke-width', '2');
     path.setAttribute('opacity',      '1');
-    path.setAttribute('marker-end',   'url(#arrow-pdf-black)');
     path.style.transition = 'none';
+    // marker-end set after markers are injected (see caller)
   });
-  return snaps;
+
+  return { snaps, usedColors };
 }
 
 function restoreEdges(snaps: EdgeSnap[]): void {
@@ -227,8 +255,8 @@ function restoreEdges(snaps: EdgeSnap[]): void {
 export function exportToPdf(
   mode: 'current' | 'full',
   positions?: Record<string, { x: number; y: number }>,
-  _ownerColors?: Record<string, string>,
-  _nodeOwnerMap?: Record<string, string>,
+  ownerColors?: Record<string, string>,
+  nodeOwnerMap?: Record<string, string>,
   _currentTransform?: { x: number; y: number; k: number },
   viewMode?: string
 ): void {
@@ -271,19 +299,29 @@ export function exportToPdf(
 
   svgEl.setAttribute('viewBox', `${vbX} ${vbY} ${vbW} ${vbH}`);
 
-  // Inject arrow defs at SVG root level (must NOT be inside a <g>)
-  const arrowDefs = injectBlackArrow(svgEl);
-
   // Inject white background + explicit grid lines before #graph-root
   const bgGrid = injectBackgroundAndGrid(svgEl, graphRoot, vbX, vbY, vbW, vbH);
 
-  // Override edges to black
-  const edgeSnaps = blackenEdges(svgEl);
+  // Phase 1 — collect edge colors and save originals
+  const { snaps: edgeSnaps, usedColors } = colorizeEdges(
+    svgEl,
+    ownerColors  ?? {},
+    nodeOwnerMap ?? {}
+  );
+
+  // Phase 2 — inject one marker per unique color as direct <svg> children
+  const markerDefs = injectColorMarkers(svgEl, usedColors);
+
+  // Phase 3 — apply the correct marker-end to every edge path
+  edgeSnaps.forEach(({ el }) => {
+    const color = el.getAttribute('stroke') ?? '#4f9eff';
+    el.setAttribute('marker-end', `url(#arrow-pdf-${color.replace('#', '')})`);
+  });
 
   function restore() {
     restoreIsolation();
-    arrowDefs.remove();
     bgGrid.remove();
+    markerDefs.remove();
     restoreEdges(edgeSnaps);
 
     if (savedViewBox !== null) svgEl!.setAttribute('viewBox', savedViewBox);

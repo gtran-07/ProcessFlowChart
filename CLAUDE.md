@@ -125,13 +125,10 @@ Steps (all DOM changes are reverted in `afterprint`):
 2. **ViewBox setup**:
    - `'full'`: `computeFullBBox()` computes positions bbox + PADDING=80. In `'lanes'` mode, `minX` is clamped to `≤ -PADDING/2` so lane labels (drawn at x=0) are included. Sets viewBox; resets `#graph-root` transform to identity.
    - `'current'`: sets viewBox to `"0 0 svgW svgH"` where svgW/svgH are the canvas pixel dimensions. The `#graph-root` transform is left untouched — the SVG renders exactly what's on-screen, scaled to fill the page.
-3. **Grid injection** — `injectBackgroundAndGrid()` inserts `<g id="pdf-injected">` before `#graph-root`:
-   - Grid spacing: `minor = clamp(round(vbW/35), 20, 100)`, `major = minor * 5`. Pattern origin snapped to a round multiple of `minor` so lines are at clean coordinates.
-   - `#pdf-minor` pattern: `path "M minor 0 L 0 0 0 minor"`, stroke `#d0dde8` 0.35. Creates thin lines at every minor grid interval.
-   - `#pdf-major` pattern: fills tile with `url(#pdf-minor)` then overlays `path "M major 0 L 0 0 0 major"`, stroke `#b0c0cc` 0.7. Creates slightly heavier lines every 5 minor cells.
-   - White `<rect>` and grid `<rect>` both covering the full viewBox area.
-   - `#arrow-pdf-black` marker: black polygon fill `#222`.
-4. **Edge override**: every `.edge-vis` → stroke `#222222`, width `1.5`, opacity `1`, `marker-end url(#arrow-pdf-black)`.
+3. **Grid injection** — two separate injections, both removed in `afterprint`:
+   - `injectBlackArrow()` inserts a `<defs id="pdf-arrow-defs">` as a **direct child of `<svg>`** (not inside any `<g>` — browsers silently ignore `<defs>` nested inside `<g>`). Defines `#arrow-pdf-black` marker with black polygon fill `#222`.
+   - `injectBackgroundAndGrid()` inserts `<g id="pdf-bg-grid">` before `#graph-root`. Contains: a white `<rect>` covering the full viewBox, then explicit `<line>` elements for minor (`#d8e6ed`, 0.3px) and major (`#b8cdd8`, 0.6px) grid lines. Grid uses **explicit lines, not SVG patterns** — patterns defined in `<defs>` inside `<g>` are unreliable across browsers/PDF renderers. Spacing: `minor = clamp(round(vbW/35), 20, 100)`, `major = minor × 5`. Lines start from a snapped multiple of `minor` so they land on round coordinates.
+4. **Edge colorization**: every `.edge-vis` reads `data-edge-from` on its parent `<g>`, looks up `nodeOwnerMap[fromId]` → `ownerColors[owner]`, sets `stroke` and `style.color` to that color, `stroke-width=2`, `opacity=1`, `marker-end=url(#arrow-dyn)`. The existing `#arrow-dyn` marker (defined in Canvas.tsx) uses `fill="currentColor"` so the arrowhead automatically matches the edge color via inheritance. No new marker injection needed.
 5. Calls `window.print()`.
 6. In `afterprint`: `restoreIsolation()`, removes injected `<g>`, restores edge attributes, restores viewBox/transform.
 
