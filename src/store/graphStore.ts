@@ -122,6 +122,7 @@ export interface GraphStore {
   /** clearGraph — resets all graph data and enters design mode for a fresh start */
   clearGraph: () => void;
   setFileHandle: (handle: FileSystemFileHandle | null) => void;
+  setCurrentFileName: (name: string | null) => void;
   loadData: (nodes: GraphNode[], savedLayout?: {
     currentView?: string;
     dag?:   { positions: Record<string, Position>; transform: Transform } | null;
@@ -289,6 +290,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
 
   // ── setFileHandle ─────────────────────────────────────────────────────────
   setFileHandle: (handle) => set({ fileHandle: handle }),
+  setCurrentFileName: (name) => set({ currentFileName: name }),
 
   // ── loadData ─────────────────────────────────────────────────────────────
 

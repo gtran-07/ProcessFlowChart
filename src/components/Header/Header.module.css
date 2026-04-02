@@ -355,6 +355,88 @@
 }
 .btnSaveJsonQuiet:hover { border-color: var(--accent3) !important; color: var(--accent3) !important; }
 
+/* Split-button wrapper: primary Save + chevron + dropdown menu */
+.saveSplit {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+}
+/* Remove right-border-radius + right-border on the primary save button */
+.saveSplit > .btnSaveJson {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: none;
+}
+/* Chevron button — shares the same border/color state as the primary button */
+.btnSaveChevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  background: transparent;
+  border: 1px solid rgba(45,212,191,.5);
+  border-left: none;
+  border-top-right-radius: 5px;
+  border-bottom-right-radius: 5px;
+  color: var(--accent3);
+  cursor: pointer;
+  transition: all .15s;
+  flex-shrink: 0;
+}
+.btnSaveChevron:hover,
+.btnSaveChevronOpen { background: rgba(45,212,191,.1); }
+.btnSaveChevronLinked {
+  border-color: var(--accent3) !important;
+  border-left-color: rgba(45,212,191,.3) !important;
+  background: rgba(45,212,191,.08);
+}
+.btnSaveChevronLinked:hover,
+.btnSaveChevronLinked.btnSaveChevronOpen { background: rgba(45,212,191,.18) !important; }
+.btnSaveChevronQuiet {
+  border-color: var(--border2) !important;
+  color: var(--text3) !important;
+}
+.btnSaveChevronQuiet:hover { border-color: var(--accent3) !important; color: var(--accent3) !important; }
+
+/* Dropdown menu for Save As / Export PDF */
+.saveMenu {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  min-width: 210px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.6);
+  z-index: 400;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: fadeIn .12s ease;
+}
+.saveMenuDivider {
+  height: 1px;
+  background: var(--border);
+  margin: 0;
+}
+.saveMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  color: var(--text2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+  transition: background .1s, color .1s;
+}
+.saveMenuItem:hover { background: var(--surface2); color: var(--text); }
+
 .unsavedDot {
   color: var(--highlight);
   font-size: 8px;

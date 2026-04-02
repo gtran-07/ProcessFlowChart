@@ -172,6 +172,18 @@ const SECTIONS: GuideSection[] = [
         <h4 className={styles.subheading}>Switching between modes</h4>
         <p>If you loaded a file in unlinked mode and want linked mode, close the file and re-open it using the <strong>Open JSON File</strong> button in Chrome or Edge. The app will re-link to the file.</p>
 
+        <h4 className={styles.subheading}>Save As</h4>
+        <p>Click the <strong>∨ chevron</strong> next to the Save button to open the save menu. Choose <strong>Save As…</strong> to write the graph to a different file location or with a new filename. In Chrome/Edge this shows the system Save dialog; in other browsers it prompts for a filename and downloads a copy.</p>
+
+        <h4 className={styles.subheading}>Export to PDF</h4>
+        <p>The save menu also offers two PDF export options, both using your browser's built-in print dialog — no third-party tools needed:</p>
+        <ul className={styles.ul}>
+          <li><strong>Export PDF — Current View</strong> — captures exactly what is visible on screen at the current pan and zoom level.</li>
+          <li><strong>Export PDF — Full Chart</strong> — automatically expands the canvas to include every node, regardless of current zoom or pan position.</li>
+        </ul>
+        <p>PDFs are rendered from SVG so they are <strong>infinitely sharp</strong> — you can zoom into any detail in your PDF viewer without pixelation. The PDF uses a clean white background with a light engineering-paper "+" grid, and all connectors are drawn in black for crisp print output.</p>
+        <Tip>In the system print dialog, choose "Save as PDF" as the destination to get a PDF file. Select <strong>landscape orientation</strong> for best results on wide charts.</Tip>
+
         <h4 className={styles.subheading}>New Flowchart (no file)</h4>
         <p>When you create a new flowchart via <strong>+ New</strong>, there is no linked file. The Save button downloads a file called <code>flowgraph.json</code>. After saving, you can re-open that file to get linked mode for future saves.</p>
 
@@ -526,6 +538,17 @@ const SECTIONS: GuideSection[] = [
           <li><strong>Gray broken-chain chip + "Save JSON" button</strong> — file is not linked. Clicking Save downloads a new copy to your Downloads folder.</li>
           <li><strong>No chip (new flowchart)</strong> — no file yet. Clicking Save downloads a file called <code>flowgraph.json</code>.</li>
         </ul>
+
+        <h4 className={styles.subheading}>Save As</h4>
+        <p>Click the <strong>∨ chevron</strong> on the right side of the Save button to open the save options menu. Choose <strong>Save As…</strong> to write to a new filename or location. After a Save As, future saves go to the new file automatically.</p>
+
+        <h4 className={styles.subheading}>Export to PDF</h4>
+        <p>The ∨ chevron menu also provides two PDF export options:</p>
+        <ul className={styles.ul}>
+          <li><strong>Export PDF — Current View</strong> — prints what is visible now.</li>
+          <li><strong>Export PDF — Full Chart</strong> — prints every node at once.</li>
+        </ul>
+        <p>PDFs use a white background with an engineering-paper "+" grid and all connectors drawn in black. Because the source is SVG vector data, the output is fully sharp at any zoom level.</p>
 
         <h4 className={styles.subheading}>What gets saved</h4>
         <p>The JSON file captures everything: node data AND the current layout positions and viewport transform for both DAG and LANES views. When you reload the file, the graph reopens exactly as you left it.</p>

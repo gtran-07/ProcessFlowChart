@@ -189,3 +189,33 @@ body {
 #graph-content {
   animation: graphFadeIn 0.3s ease;
 }
+
+/* ─── PRINT / PDF EXPORT ──────────────────────────────────────────────────────
+ * DOM isolation, viewBox, background, grid, and edge colorization are all
+ * handled programmatically in exportPdf.ts before window.print() is called.
+ * This @media print block handles only the SVG sizing and color accuracy.
+ * ─────────────────────────────────────────────────────────────────────────── */
+@media print {
+  @page { size: landscape; margin: 0; }
+
+  /* Force the SVG to fill the entire print page */
+  #canvas-wrap > svg {
+    width: 100vw !important;
+    height: 100vh !important;
+    display: block;
+  }
+
+  /* Preserve owner-colored node card fills and other colored SVG content */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Hide the ::before dot-grid pseudo-element on the canvas during print */
+  #canvas-wrap::before { display: none !important; }
+
+  /* Hide overlays: minimap, zoom buttons, banners, design toolbar, tooltips */
+  #canvas-wrap > *:not(svg) {
+    display: none !important;
+  }
+}

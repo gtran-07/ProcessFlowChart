@@ -15,6 +15,7 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { useGraphStore } from '../../store/graphStore';
 import { exportGraphToJson, buildExportPayload } from '../../utils/exportJson';
+import { exportToPdf } from '../../utils/exportPdf';
 import type { SavedLayout } from '../../types/graph';
 import styles from './Header.module.css';
 
@@ -24,8 +25,8 @@ export function Header() {
     setViewMode, setDesignMode, loadData, rebuildGraph, clearGraph,
     saveNamedLayout, loadNamedLayout, fitToScreen,
     setSelectedNode, setLastJumpedNode, positions, setTransform, transform,
-    activeOwners, toggleOwner, layoutCache, currentFileName,
-    fileHandle, setFileHandle,
+    activeOwners, toggleOwner, layoutCache, currentFileName, ownerColors,
+    fileHandle, setFileHandle, setCurrentFileName,
   } = useGraphStore();
 
   // True when File System Access API is available (Chrome/Edge 86+)
@@ -39,6 +40,7 @@ export function Header() {
   const [layoutName, setLayoutName] = useState('');
   const [savedLayouts, setSavedLayouts] = useState<SavedLayout[]>([]);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [saveMenuOpen, setSaveMenuOpen] = useState(false);
 
   // Modal open flag — numeric counter so every button click triggers the effect.
   const [guidePulse, setGuidePulse] = useState(0);
@@ -46,6 +48,7 @@ export function Header() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const layoutsRef = useRef<HTMLDivElement>(null);
+  const saveMenuRef = useRef<HTMLDivElement>(null);
 
   // ── Load saved layouts from localStorage on mount / dropdown open ─────
   useEffect(() => {
@@ -166,6 +169,48 @@ export function Header() {
     }
   }, [fileHandle, viewMode, positions, transform, layoutCache, allNodes, currentFileName]);
 
+  // ── Save As — pick a new file path, write, and update the handle ────────
+  const handleSaveAs = useCallback(async () => {
+    setSaveMenuOpen(false);
+    const dagLayout   = viewMode === 'dag'   ? { positions, transform } : (layoutCache['dag']   ?? null);
+    const lanesLayout = viewMode === 'lanes' ? { positions, transform } : (layoutCache['lanes'] ?? null);
+    const payload = buildExportPayload(allNodes, viewMode, dagLayout, lanesLayout);
+    const json = JSON.stringify(payload, null, 2);
+
+    if (window.showSaveFilePicker) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: currentFileName ?? 'flowgraph.json',
+          types: [{ description: 'FlowGraph JSON', accept: { 'application/json': ['.json'] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(json);
+        await writable.close();
+        setFileHandle(handle);
+        setCurrentFileName(handle.name);
+        setLastSavedAt(new Date());
+      } catch (err) {
+        if ((err as Error).name !== 'AbortError') {
+          alert(`Save As failed: ${(err as Error).message}`);
+        }
+      }
+    } else {
+      // Fallback: download with a user-chosen name via prompt
+      const name = window.prompt('Enter a filename for the saved file:', currentFileName ?? 'flowgraph.json');
+      if (!name) return;
+      const safeName = name.endsWith('.json') ? name : `${name}.json`;
+      exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, safeName);
+      setCurrentFileName(safeName);
+      setLastSavedAt(new Date());
+    }
+  }, [viewMode, positions, transform, layoutCache, allNodes, currentFileName, setFileHandle, setCurrentFileName]);
+
+  // ── Export PDF ───────────────────────────────────────────────────────────
+  const handleExportPdf = useCallback((mode: 'current' | 'full') => {
+    setSaveMenuOpen(false);
+    exportToPdf(mode, positions, undefined, undefined, undefined, viewMode);
+  }, [positions, viewMode]);
+
   // ── Global keyboard shortcuts ─────────────────────────────────────────
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
@@ -191,6 +236,9 @@ export function Header() {
     function handleOutsideClick(e: MouseEvent) {
       if (layoutsRef.current && !layoutsRef.current.contains(e.target as Node)) {
         setLayoutsOpen(false);
+      }
+      if (saveMenuRef.current && !saveMenuRef.current.contains(e.target as Node)) {
+        setSaveMenuOpen(false);
       }
     }
     document.addEventListener('mousedown', handleOutsideClick);
@@ -480,32 +528,70 @@ export function Header() {
           )}
         </div>
 
-        {/* Save — in-place if file is linked, download otherwise */}
+        {/* Save — split button: primary action + chevron opens save/export menu */}
         {hasData && (
-          <button
-            className={`${styles.btnSaveJson} ${fileHandle ? styles.btnSaveJsonLinked : ''} ${!designDirty && !fileHandle ? styles.btnSaveJsonQuiet : ''}`}
-            title={fileHandle
-              ? `Save — writes directly to "${currentFileName}" on your disk (no download)`
-              : `Download JSON — saves a copy to your Downloads folder${currentFileName ? ` as "${currentFileName}"` : ''}\nTo save in-place, re-open the file using the Open button (Chrome/Edge only)`}
-            onClick={handleSaveJson}
-          >
-            {fileHandle ? (
-              /* Floppy-disk icon when linked */
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-                <polyline points="17 21 17 13 7 13 7 21"/>
-                <polyline points="7 3 7 8 15 8"/>
+          <div className={styles.saveSplit} ref={saveMenuRef}>
+            <button
+              className={`${styles.btnSaveJson} ${fileHandle ? styles.btnSaveJsonLinked : ''} ${!designDirty && !fileHandle ? styles.btnSaveJsonQuiet : ''}`}
+              title={fileHandle
+                ? `Save — writes directly to "${currentFileName}" on your disk (no download)`
+                : `Download JSON — saves a copy to your Downloads folder${currentFileName ? ` as "${currentFileName}"` : ''}\nTo save in-place, re-open the file using the Open button (Chrome/Edge only)`}
+              onClick={handleSaveJson}
+            >
+              {fileHandle ? (
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                  <polyline points="17 21 17 13 7 13 7 21"/>
+                  <polyline points="7 3 7 8 15 8"/>
+                </svg>
+              ) : (
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="7 10 12 15 17 10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+              )}
+              <span className={styles.btnLabel}>{fileHandle ? 'Save' : 'Save JSON'}</span>
+            </button>
+            <button
+              className={`${styles.btnSaveChevron} ${fileHandle ? styles.btnSaveChevronLinked : ''} ${!designDirty && !fileHandle ? styles.btnSaveChevronQuiet : ''} ${saveMenuOpen ? styles.btnSaveChevronOpen : ''}`}
+              title="More save options"
+              onClick={() => setSaveMenuOpen((v) => !v)}
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <polyline points="6 9 12 15 18 9"/>
               </svg>
-            ) : (
-              /* Download icon when not linked */
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="7 10 12 15 17 10"/>
-                <line x1="12" y1="15" x2="12" y2="3"/>
-              </svg>
+            </button>
+            {saveMenuOpen && (
+              <div className={styles.saveMenu}>
+                <button className={styles.saveMenuItem} onClick={handleSaveAs}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                    <polyline points="17 21 17 13 7 13 7 21"/>
+                    <polyline points="7 3 7 8 15 8"/>
+                  </svg>
+                  Save As…
+                </button>
+                <div className={styles.saveMenuDivider} />
+                <button className={styles.saveMenuItem} onClick={() => handleExportPdf('current')}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="16" y1="13" x2="8" y2="13"/>
+                    <line x1="16" y1="17" x2="8" y2="17"/>
+                    <polyline points="10 9 9 9 8 9"/>
+                  </svg>
+                  Export PDF — Current View
+                </button>
+                <button className={styles.saveMenuItem} onClick={() => handleExportPdf('full')}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M3 9h18"/>
+                  </svg>
+                  Export PDF — Full Chart
+                </button>
+              </div>
             )}
-            <span className={styles.btnLabel}>{fileHandle ? 'Save' : 'Save JSON'}</span>
-          </button>
+          </div>
         )}
 
         {/* Design mode toggle */}
