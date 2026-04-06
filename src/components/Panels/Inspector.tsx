@@ -14,25 +14,39 @@ import { useGraphStore } from '../../store/graphStore';
 import styles from './Inspector.module.css';
 
 export function Inspector() {
-  const { selectedNodeId, allNodes, ownerColors, setSelectedNode, designMode } = useGraphStore();
+  const {
+    selectedNodeId, allNodes, ownerColors, setSelectedNode, designMode,
+    selectedGroupId, groups, setSelectedGroup,
+  } = useGraphStore();
 
   const selectedNode = selectedNodeId
     ? allNodes.find((node) => node.id === selectedNodeId)
     : null;
 
+  const selectedGroup = selectedGroupId
+    ? groups.find((g) => g.id === selectedGroupId)
+    : null;
+
+  const hasSelection = !!selectedNode || !!selectedGroup;
+
   // ── userOpen: the user-controlled open state ──────────────────────────
-  // Starts false (closed). Auto-opens whenever a node becomes selected.
-  // Can be independently toggled by the header ▣ button.
   const [userOpen, setUserOpen] = useState(false);
   const prevSelectedIdRef = useRef<string | null>(null);
+  const prevGroupIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    // Auto-open when a node is newly selected (different from the previous one)
     if (selectedNodeId && selectedNodeId !== prevSelectedIdRef.current) {
       setUserOpen(true);
     }
     prevSelectedIdRef.current = selectedNodeId;
   }, [selectedNodeId]);
+
+  useEffect(() => {
+    if (selectedGroupId && selectedGroupId !== prevGroupIdRef.current) {
+      setUserOpen(true);
+    }
+    prevGroupIdRef.current = selectedGroupId;
+  }, [selectedGroupId]);
 
   // ── Listen for the header ▣ toggle button ─────────────────────────────
   useEffect(() => {
@@ -43,18 +57,26 @@ export function Inspector() {
     return () => document.removeEventListener('flowgraph:toggle-inspector', handleToggle);
   }, []);
 
-  // The pane is visible when there IS a selected node AND the user hasn't closed it
-  const isOpen = !!selectedNode && userOpen;
+  const isOpen = hasSelection && userOpen;
 
   function handleClose() {
     setUserOpen(false);
     setSelectedNode(null);
+    setSelectedGroup(null);
   }
 
   function handleEditClick() {
     if (selectedNode) {
       document.dispatchEvent(
         new CustomEvent('flowgraph:edit-node', { detail: { nodeId: selectedNode.id } })
+      );
+    }
+  }
+
+  function handleEditGroupClick() {
+    if (selectedGroup) {
+      document.dispatchEvent(
+        new CustomEvent('flowgraph:edit-group', { detail: { groupId: selectedGroup.id } })
       );
     }
   }
@@ -71,9 +93,88 @@ export function Inspector() {
       </div>
 
       <div className={styles.body}>
-        {!selectedNode ? (
-          <div className={styles.empty}>Select a node to view its details.</div>
-        ) : (
+        {!hasSelection ? (
+          <div className={styles.empty}>Select a node or group to view its details.</div>
+        ) : selectedGroup ? (
+          /* ── Group details ──────────────────────────────────────────── */
+          <>
+            <div className={styles.name}>{selectedGroup.name}</div>
+            <div className={styles.sub}>Group ID: {selectedGroup.id}</div>
+
+            <div className={styles.section}>Description</div>
+            <div className={styles.desc}>
+              {selectedGroup.description || 'No description provided.'}
+            </div>
+
+            <div className={styles.section}>Owner(s)</div>
+            <div className={styles.tags}>
+              {selectedGroup.owners.length === 0 ? (
+                <span style={{ fontSize: 11, color: 'var(--text3)' }}>None</span>
+              ) : (
+                selectedGroup.owners.map((o) => (
+                  <span
+                    key={o}
+                    className={styles.tag}
+                    style={{
+                      borderColor: ownerColors[o] ?? 'var(--accent)',
+                      color: ownerColors[o] ?? 'var(--accent)',
+                    }}
+                  >
+                    {o}
+                  </span>
+                ))
+              )}
+            </div>
+
+            <div className={styles.section}>
+              Children ({selectedGroup.childNodeIds.length} nodes
+              {selectedGroup.childGroupIds.length > 0
+                ? `, ${selectedGroup.childGroupIds.length} groups`
+                : ''})
+            </div>
+            <div className={styles.tags}>
+              {selectedGroup.childNodeIds.slice(0, 8).map((nid) => {
+                const n = allNodes.find((node) => node.id === nid);
+                return (
+                  <span key={nid} className={`${styles.tag} ${styles.tagDep}`}>
+                    {n ? n.name : nid}
+                  </span>
+                );
+              })}
+              {selectedGroup.childNodeIds.length > 8 && (
+                <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                  +{selectedGroup.childNodeIds.length - 8} more…
+                </span>
+              )}
+            </div>
+
+            <div className={styles.section}>Status</div>
+            <div className={styles.tags}>
+              <span className={styles.tag} style={{ borderColor: 'var(--accent3)', color: 'var(--accent3)' }}>
+                {selectedGroup.collapsed ? 'Collapsed' : 'Expanded'}
+              </span>
+            </div>
+
+            {designMode && (
+              <button
+                onClick={handleEditGroupClick}
+                style={{
+                  marginTop: 16, width: '100%',
+                  padding: '8px 0', borderRadius: 5,
+                  border: '1px solid var(--design)',
+                  background: 'rgba(167,139,250,.1)',
+                  color: 'var(--design)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 11, fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                ✏️ Edit Group
+              </button>
+            )}
+          </>
+        ) : selectedNode ? (
+          /* ── Node details ───────────────────────────────────────────── */
           <>
             <div className={styles.name}>{selectedNode.name}</div>
             <div className={styles.sub}>ID: {selectedNode.id}</div>
@@ -131,7 +232,7 @@ export function Inspector() {
               </button>
             )}
           </>
-        )}
+        ) : null}
       </div>
     </div>
   );

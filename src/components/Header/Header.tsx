@@ -26,7 +26,7 @@ export function Header() {
     saveNamedLayout, loadNamedLayout, fitToScreen,
     setSelectedNode, setLastJumpedNode, positions, setTransform, transform,
     activeOwners, toggleOwner, layoutCache, currentFileName, ownerColors,
-    fileHandle, setFileHandle, setCurrentFileName,
+    fileHandle, setFileHandle, setCurrentFileName, groups,
   } = useGraphStore();
 
   // True when File System Access API is available (Chrome/Edge 86+)
@@ -81,6 +81,12 @@ export function Header() {
       const obj = parsed as Record<string, unknown>;
       rawNodes = obj.nodes as unknown[];
       savedLayout = (obj._layout as typeof savedLayout) ?? null;
+      // Attach groups to savedLayout so loadData can pick them up
+      if (savedLayout && Array.isArray(obj.groups)) {
+        (savedLayout as Record<string, unknown>).groups = obj.groups;
+      } else if (!savedLayout && Array.isArray(obj.groups)) {
+        savedLayout = { positions: {}, transform: { x: 0, y: 0, k: 1 }, groups: obj.groups } as unknown as typeof savedLayout;
+      }
     } else {
       alert('JSON must be an array of nodes or an object with a "nodes" array.');
       return;
@@ -151,7 +157,7 @@ export function Header() {
       try {
         const perm = await fileHandle.requestPermission({ mode: 'readwrite' });
         if (perm !== 'granted') throw new Error('Write permission denied');
-        const payload = buildExportPayload(allNodes, viewMode, dagLayout, lanesLayout);
+        const payload = buildExportPayload(allNodes, viewMode, dagLayout, lanesLayout, groups);
         const writable = await fileHandle.createWritable();
         await writable.write(JSON.stringify(payload, null, 2));
         await writable.close();
@@ -159,12 +165,12 @@ export function Header() {
       } catch (err) {
         if ((err as Error).name !== 'AbortError') {
           // Permission denied or write error — fall back to download so no data is lost
-          exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, currentFileName ?? undefined);
+          exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, currentFileName ?? undefined, groups);
           setLastSavedAt(new Date());
         }
       }
     } else {
-      exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, currentFileName ?? undefined);
+      exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, currentFileName ?? undefined, groups);
       setLastSavedAt(new Date());
     }
   }, [fileHandle, viewMode, positions, transform, layoutCache, allNodes, currentFileName]);
@@ -174,7 +180,7 @@ export function Header() {
     setSaveMenuOpen(false);
     const dagLayout   = viewMode === 'dag'   ? { positions, transform } : (layoutCache['dag']   ?? null);
     const lanesLayout = viewMode === 'lanes' ? { positions, transform } : (layoutCache['lanes'] ?? null);
-    const payload = buildExportPayload(allNodes, viewMode, dagLayout, lanesLayout);
+    const payload = buildExportPayload(allNodes, viewMode, dagLayout, lanesLayout, groups);
     const json = JSON.stringify(payload, null, 2);
 
     if (window.showSaveFilePicker) {
@@ -199,7 +205,7 @@ export function Header() {
       const name = window.prompt('Enter a filename for the saved file:', currentFileName ?? 'flowgraph.json');
       if (!name) return;
       const safeName = name.endsWith('.json') ? name : `${name}.json`;
-      exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, safeName);
+      exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, safeName, groups);
       setCurrentFileName(safeName);
       setLastSavedAt(new Date());
     }

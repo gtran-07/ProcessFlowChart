@@ -4,6 +4,7 @@
   flex: 1;
   overflow: hidden;
   position: relative;
+  isolation: isolate; /* Contain compositing layers — prevents GPU artifacts from bleeding into header */
   background: var(--bg);
   background-image:
     radial-gradient(circle at 20% 50%, rgba(79,158,255,.03) 0%, transparent 50%),

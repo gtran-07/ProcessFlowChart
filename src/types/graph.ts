@@ -138,6 +138,8 @@ export interface FocusSnapshot {
   viewModeAtEnter: ViewMode;
   /** Node positions before focus was entered */
   positions: Record<string, Position>;
+  /** Lane metrics before focus was entered (needed to restore LANES view correctly) */
+  laneMetrics: Record<string, LaneMetrics>;
   /** Viewport transform before focus was entered */
   transform: Transform;
   /** Which nodes were visible before focus was entered */
@@ -181,4 +183,38 @@ export interface GraphAdapter {
 export interface UndoSnapshot {
   nodes: GraphNode[];
   positions: Record<string, Position>;
+  groups: GraphGroup[];
+}
+
+// ─── GROUP TYPES ─────────────────────────────────────────────────────────────
+
+/**
+ * GraphGroup — a named collection of connected nodes (and/or sub-groups).
+ *
+ * Groups form a hierarchy: a group may contain nodes (childNodeIds) and/or
+ * other groups (childGroupIds). The nesting depth determines the polygon shape:
+ *   depth 1 → pentagon (5 sides), depth 2 → hexagon (6 sides), etc.
+ *
+ * When collapsed the group is rendered as a polygon placeholder and all its
+ * descendant nodes are hidden from the canvas. When expanded an overlay
+ * bounding-box is drawn around the children.
+ */
+export interface GraphGroup {
+  /** Unique identifier in the format "GROUP-XX" */
+  id: string;
+  /** Display name shown on the group polygon */
+  name: string;
+  /** Optional description shown in the Inspector */
+  description: string;
+  /**
+   * Owner names derived from the group's children.
+   * Single entry when all children share an owner; multiple when mixed.
+   */
+  owners: string[];
+  /** IDs of nodes that are direct (immediate) children of this group */
+  childNodeIds: string[];
+  /** IDs of sub-groups that are direct children of this group */
+  childGroupIds: string[];
+  /** When true the group is rendered as a collapsed polygon on the canvas */
+  collapsed: boolean;
 }

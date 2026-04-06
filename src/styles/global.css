@@ -127,31 +127,103 @@ body {
 }
 
 /**
- * Hover dim/highlight — applied via direct DOM class manipulation in Canvas.tsx.
- * Using CSS (not React state) means zero re-renders across all NodeCards on hover.
- *
- * When [data-hovering] is set on #graph-root, all .node-group elements dim to 0.35.
- * The hovered node (.hovered) and its direct neighbors (.neighbor) stay at full opacity.
- * Neighbor nodes also get a teal stroke to indicate connectivity.
+ * selectedGlowPulse — pulsing red dashed ring shown when a node/group is selected
+ * in design mode. Animates stroke-opacity (not opacity) so it does not conflict
+ * with the parent .node-group opacity used by the hover-dim system.
  */
-.node-group {
-  transition: opacity .18s ease, transform .35s cubic-bezier(.4,0,.2,1);
-  will-change: opacity;
+@keyframes selectedGlowPulse {
+  0%   { stroke-opacity: 0.45; }
+  50%  { stroke-opacity: 1; }
+  100% { stroke-opacity: 0.45; }
 }
-/* Suppress transform transition while actively dragging — avoids rubber-band lag */
-.node-group.node-dragging {
-  transition: opacity .18s ease !important;
+
+.node-selected-glow,
+.group-selected-ring,
+.group-selected-glow {
+  animation: selectedGlowPulse 1.4s ease-in-out infinite;
 }
-#graph-root[data-hovering] .node-group {
-  opacity: 0.3;
+
+/**
+ * Hover highlight — POSITIVE ONLY, no dimming of non-hovered nodes.
+ *
+ * Any approach that changes CSS properties on non-hovered nodes during hover
+ * (opacity, fill, stroke on the ~140 leaf elements across 20+ nodes) invalidates
+ * paint tiles across the entire canvas. At high zoom levels those tiles are large
+ * and Chrome can't repaint all of them in one frame — you see the old tile content
+ * as flickering grey/white boxes everywhere.
+ *
+ * Solution: only ADD visual weight to the hovered node and its neighbors.
+ * Non-hovered nodes are untouched — zero tile invalidation, zero flicker.
+ */
+
+/* Hovered node: bright accent outline on its main shape */
+.node-group.hovered .node-main-rect {
+  stroke: var(--accent) !important;
+  stroke-width: 3 !important;
 }
-#graph-root[data-hovering] .node-group.hovered,
-#graph-root[data-hovering] .node-group.neighbor {
-  opacity: 1;
+
+/* Neighbor nodes: teal stroke hint */
+.node-group.neighbor .node-main-rect {
+  stroke: var(--accent3) !important;
+  stroke-width: 2 !important;
 }
-#graph-root[data-hovering] .node-group.neighbor .node-main-rect {
-  stroke: var(--accent3);
-  stroke-width: 1.5;
+
+/**
+ * Group collapse/expand animations.
+ *
+ * group-exploding: polygon "explodes" — scales up briefly then fades while children appear.
+ *   Applied to collapsed-group polygon when it's being replaced by the expanded overlay.
+ *
+ * group-imploding: overlay "implodes" — fades and scales down as children fold back in.
+ *   Applied to expanded-group overlay when it's collapsing.
+ *
+ * node-group-appearing: child nodes scale up from the group center.
+ * node-group-disappearing: child nodes scale down toward the group center.
+ */
+@keyframes groupExplode {
+  0%   { opacity: 1; transform: scale(1); }
+  40%  { opacity: 1; transform: scale(1.25); }
+  100% { opacity: 0; transform: scale(0.15); }
+}
+
+@keyframes groupImplode {
+  0%   { opacity: 1; transform: scale(1); }
+  30%  { opacity: 1; transform: scale(1.15); }
+  100% { opacity: 0; transform: scale(0.1); }
+}
+
+@keyframes nodeAppear {
+  0%   { opacity: 0; transform: scale(0.1); }
+  60%  { opacity: 1; transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes nodeDisappear {
+  0%   { opacity: 1; transform: scale(1); }
+  40%  { opacity: 1; transform: scale(1.05); }
+  100% { opacity: 0; transform: scale(0.1); }
+}
+
+/* Applied to the collapsed-group <g> while expanding */
+.group-exploding {
+  animation: groupExplode 0.45s ease-in forwards;
+  pointer-events: none;
+}
+
+/* Applied to the expanded-group overlay while collapsing */
+.group-imploding {
+  animation: groupImplode 0.38s ease-in forwards;
+  pointer-events: none;
+}
+
+/* When a group is expanding its children appear with a fan-out */
+.group-expanding > .node-group {
+  animation: nodeAppear 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* When a group is collapsing its children fold back in */
+.group-collapsing > .node-group {
+  animation: nodeDisappear 0.35s ease-in forwards;
 }
 
 /**

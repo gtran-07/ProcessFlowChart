@@ -14,6 +14,7 @@ import { Sidebar } from './components/Panels/Sidebar';
 import { Canvas } from './components/Canvas/Canvas';
 import { Inspector } from './components/Panels/Inspector';
 import { NodeEditModal } from './components/DesignMode/NodeEditModal';
+import { GroupEditModal } from './components/DesignMode/GroupEditModal';
 import { UserGuideModal } from './components/Modals/UserGuideModal';
 import styles from './App.module.css';
 
@@ -41,6 +42,7 @@ export default function App() {
 
       {/* Modals — rendered outside the layout flow so they overlay everything */}
       <NodeEditModal />
+      <GroupEditModal />
       <UserGuideModal />
     </div>
   );

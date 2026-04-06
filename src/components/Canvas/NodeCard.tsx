@@ -28,7 +28,7 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
     selectedNodeId, lastJumpedNodeId,
     designMode, designTool, connectSourceId,
     setSelectedNode, setHoveredNode, setConnectSource, addEdge,
-    saveLayoutToCache,
+    saveLayoutToCache, multiSelectIds, toggleMultiSelect,
   } = useGraphStore();
 
   const groupRef = useRef<SVGGElement>(null);
@@ -48,11 +48,14 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
   const isSelected = selectedNodeId === node.id;
   const isJumped = lastJumpedNodeId === node.id;
   const isConnectSource = connectSourceId === node.id;
+  const isMultiSelected = multiSelectIds.includes(node.id);
 
   let strokeColor = 'var(--border2)';
   let strokeWidth = 1.5;
-  if (isConnectSource) { strokeColor = '#a78bfa'; strokeWidth = 2.5; }
-  else if (isSelected || isLocalHovered) { strokeColor = 'var(--accent)'; strokeWidth = 2; }
+  if (isConnectSource)                      { strokeColor = '#a78bfa'; strokeWidth = 2.5; }
+  else if (isMultiSelected || (isSelected && designMode)) { strokeColor = '#ef4444'; strokeWidth = 2.5; }
+  else if (isSelected)                      { strokeColor = 'var(--accent)'; strokeWidth = 2; }
+  else if (isLocalHovered)                  { strokeColor = 'var(--accent)'; strokeWidth = 2; }
 
   // ── Drag handling ─────────────────────────────────────────────────────
   function handleMouseDown(e: React.MouseEvent) {
@@ -135,6 +138,20 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
       return;
     }
 
+    // Shift+click in select mode: toggle multi-select for grouping.
+    // If this is the first shift-click, auto-include whichever item was already
+    // selected (node OR group) so it isn't silently dropped from the new group.
+    if (designMode && designTool === 'select' && e.shiftKey) {
+      const state = useGraphStore.getState();
+      if (state.multiSelectIds.length === 0) {
+        const prev = state.selectedNodeId !== node.id ? state.selectedNodeId : null;
+        if (prev) toggleMultiSelect(prev);
+        else if (state.selectedGroupId) toggleMultiSelect(state.selectedGroupId);
+      }
+      toggleMultiSelect(node.id);
+      return;
+    }
+
     setSelectedNode(node.id);
   }
 
@@ -153,7 +170,7 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
   return (
     <g
       ref={groupRef}
-      className={`node-group${isJumped ? ' node-jumped' : ''}`}
+      className={`node-group${isJumped ? ' node-jumped' : ''}${(isSelected || isMultiSelected) && designMode ? ' node-selected' : ''}`}
       data-id={node.id}
       // CSS transform (not SVG attribute) enables CSS transitions for view/focus switches
       style={{ cursor: 'grab', transform: `translate(${position.x}px,${position.y}px)` }}
@@ -163,9 +180,18 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
       onMouseEnter={() => { setIsLocalHovered(true); setHoveredNode(node.id); }}
       onMouseLeave={() => { setIsLocalHovered(false); setHoveredNode(null); }}
     >
-      {/* Drop shadow */}
-      <rect x={2} y={4} width={NODE_W} height={NODE_H} rx={6}
-        fill="rgba(0,0,0,0.3)" style={{ filter: 'blur(4px)' }} />
+      {/* Drop shadow — plain rect, no blur filter (blur triggers GPU recomposition on opacity transitions, causing flicker) */}
+      <rect x={3} y={5} width={NODE_W} height={NODE_H} rx={6}
+        fill="rgba(0,0,0,0.22)" />
+
+      {/* Selection glow — red ring for selected or multi-selected items in design mode */}
+      {(isSelected || isMultiSelected) && designMode && (
+        <rect
+          className="node-selected-glow"
+          x={-4} y={-4} width={NODE_W + 8} height={NODE_H + 8} rx={9}
+          fill="none" stroke="#ef4444" strokeWidth={2} strokeDasharray="6 3"
+        />
+      )}
 
       {/* Main rectangle */}
       <rect

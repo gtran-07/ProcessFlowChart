@@ -14,8 +14,9 @@
 
 import React from 'react';
 import { computeEdgePath, NODE_W, NODE_H } from '../../utils/layout';
-import type { GraphEdge, Position, GraphNode } from '../../types/graph';
+import type { GraphEdge, GraphGroup, Position, GraphNode } from '../../types/graph';
 import { useGraphStore } from '../../store/graphStore';
+import { getCollapsedGroupForNode, getAllDescendantNodeIds } from '../../utils/grouping';
 
 interface EdgeLayerProps {
   edges: GraphEdge[];
@@ -23,10 +24,34 @@ interface EdgeLayerProps {
   designMode: boolean;
   ownerColors: Record<string, string>;
   nodes: GraphNode[];
+  groups: GraphGroup[];
 }
 
-export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes }: EdgeLayerProps) {
+export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes, groups }: EdgeLayerProps) {
   const { hoveredNodeId, deleteEdge, viewMode } = useGraphStore();
+
+  /**
+   * Resolve the effective position for an edge endpoint.
+   * If the node is inside a collapsed group, route the edge to/from that group's position.
+   * Group positions are CENTER-based; node positions are top-left-based.
+   */
+  function effectiveFromPos(nodeId: string): Position | null {
+    const collapsed = getCollapsedGroupForNode(nodeId, groups);
+    if (collapsed) {
+      const gp = positions[collapsed.id];
+      return gp ? { x: gp.x - NODE_W / 2, y: gp.y - NODE_H / 2 } : null;
+    }
+    return positions[nodeId] ?? null;
+  }
+
+  function effectiveToPos(nodeId: string): Position | null {
+    const collapsed = getCollapsedGroupForNode(nodeId, groups);
+    if (collapsed) {
+      const gp = positions[collapsed.id];
+      return gp ? { x: gp.x - NODE_W / 2, y: gp.y - NODE_H / 2 } : null;
+    }
+    return positions[nodeId] ?? null;
+  }
 
   // Build a quick id→owner lookup for edge coloring
   const nodeOwnerMap: Record<string, string> = {};
@@ -35,9 +60,14 @@ export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes }: 
   return (
     <>
       {edges.map((edge) => {
-        const fromPos = positions[edge.from];
-        const toPos = positions[edge.to];
+        const fromPos = effectiveFromPos(edge.from);
+        const toPos = effectiveToPos(edge.to);
         if (!fromPos || !toPos) return null; // Skip edges with missing position data
+
+        // Skip self-edges that result when both endpoints are in the same collapsed group
+        const fromGroup = getCollapsedGroupForNode(edge.from, groups);
+        const toGroup = getCollapsedGroupForNode(edge.to, groups);
+        if (fromGroup && toGroup && fromGroup.id === toGroup.id) return null;
 
         const pathD = computeEdgePath(fromPos, toPos);
 
@@ -45,18 +75,32 @@ export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes }: 
         // Cross-lane edges are rendered dashed and dimmed in LANES view
         const isCrossLane = viewMode === 'lanes' && nodeOwnerMap[edge.from] !== nodeOwnerMap[edge.to];
 
-        // Determine edge highlight state based on hovered node
+        // Determine edge highlight state based on hovered node or group.
+        // When hovering a group, any edge connecting to/from one of its descendant
+        // nodes is treated as connected to the group.
         let isHighlighted = false;
         let isConnectedToHovered = false;
         if (hoveredNodeId) {
-          const hovNode = useGraphStore.getState().allNodes.find((n) => n.id === hoveredNodeId);
-          const directParents = new Set(hovNode?.dependencies ?? []);
-          const directChildren = new Set(
-            useGraphStore.getState().visibleEdges.filter((e) => e.from === hoveredNodeId).map((e) => e.to)
-          );
-          isConnectedToHovered =
-            (edge.to === hoveredNodeId && directParents.has(edge.from)) ||
-            (edge.from === hoveredNodeId && directChildren.has(edge.to));
+          const state = useGraphStore.getState();
+          const hovGroup = state.groups ? state.groups.find((g) => g.id === hoveredNodeId) : null;
+
+          if (hovGroup) {
+            // Hovering a group: highlight edges that cross the group boundary
+            const descendantIds = new Set(getAllDescendantNodeIds(hovGroup.id, state.groups));
+            const fromInGroup = descendantIds.has(edge.from);
+            const toInGroup   = descendantIds.has(edge.to);
+            // Edge is boundary-crossing if exactly one endpoint is inside the group
+            isConnectedToHovered = fromInGroup !== toInGroup;
+          } else {
+            const hovNode = state.allNodes.find((n) => n.id === hoveredNodeId);
+            const directParents = new Set(hovNode?.dependencies ?? []);
+            const directChildren = new Set(
+              state.visibleEdges.filter((e) => e.from === hoveredNodeId).map((e) => e.to)
+            );
+            isConnectedToHovered =
+              (edge.to === hoveredNodeId && directParents.has(edge.from)) ||
+              (edge.from === hoveredNodeId && directChildren.has(edge.to));
+          }
           isHighlighted = isConnectedToHovered;
         }
 
@@ -70,16 +114,17 @@ export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes }: 
         let markerEnd = 'url(#arrow)';
 
         if (isHighlighted) {
+          // Positive-only: boost connected edges, never dim non-connected ones.
+          // Dimming non-connected edges changes opacity on 20-30 long paths simultaneously;
+          // at high zoom each path spans many paint tiles → tile invalidation → flicker boxes.
           strokeColor = highlightColor;
-          strokeWidth = 2;
+          strokeWidth = 2.5;
           markerEnd = 'url(#arrow-dyn)';
-        } else if (hoveredNodeId && !isConnectedToHovered) {
-          opacity = 0.08; // Dim unconnected edges when something is hovered
         }
 
         if (isCrossLane && !isHighlighted) {
           strokeDasharray = '5 4';
-          opacity = Math.min(opacity, 0.45);
+          opacity = 0.45; // static — does not change on hover, no tile repaint triggered
         }
 
         function handleEdgeMouseEnter(e: React.MouseEvent) {
@@ -152,7 +197,7 @@ export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes }: 
               markerEnd={markerEnd}
               style={{
                 color: highlightColor, // Used by arrow-dyn marker via currentColor
-                transition: 'stroke .15s, opacity .15s',
+                transition: 'stroke .15s',
                 pointerEvents: 'none', // Hit area handles events, not this path
               }}
             />

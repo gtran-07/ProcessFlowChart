@@ -19,6 +19,7 @@ import { create } from 'zustand';
 import type {
   GraphNode,
   GraphEdge,
+  GraphGroup,
   Position,
   Transform,
   ViewMode,
@@ -37,6 +38,14 @@ import {
   LANE_LABEL_W,
 } from '../utils/layout';
 import { assignOwnerColors } from '../utils/colors';
+import {
+  deriveGroupOwners,
+  generateGroupId,
+  getHiddenNodeIds,
+  getAllDescendantNodeIds,
+  getAllDescendantGroupIds,
+  GROUP_R,
+} from '../utils/grouping';
 
 // ─── STORE INTERFACE ─────────────────────────────────────────────────────────
 
@@ -109,6 +118,14 @@ export interface GraphStore {
   undo: () => void;
   redo: () => void;
 
+  // ── Groups ────────────────────────────────────────────────────────────────
+  /** All groups in the graph */
+  groups: GraphGroup[];
+  /** IDs of nodes/groups currently selected for group creation (design mode multi-select) */
+  multiSelectIds: string[];
+  /** ID of the selected group (shown in Inspector). Null when nothing selected. */
+  selectedGroupId: string | null;
+
   /** Name of the currently-loaded JSON file, or null if no file is loaded */
   currentFileName: string | null;
   /**
@@ -154,6 +171,30 @@ export interface GraphStore {
   saveNamedLayout: (name: string) => void;
   loadNamedLayout: (snapshot: LayoutSnapshot, viewMode: ViewMode) => void;
   fitToScreen: () => void;
+
+  // ── Group actions ──────────────────────────────────────────────────────────
+  /** Create a new group from selected node IDs and optional child group IDs */
+  createGroup: (
+    childNodeIds: string[],
+    childGroupIds: string[],
+    data: { name: string; description: string }
+  ) => void;
+  /** Update one or more fields of an existing group */
+  updateGroup: (id: string, changes: Partial<Omit<GraphGroup, 'id'>>) => void;
+  /**
+   * Delete a group.
+   * If dissolve=true, its children remain as standalone nodes/groups.
+   * If dissolve=false (default), children are also deleted.
+   */
+  deleteGroup: (id: string, dissolve?: boolean) => void;
+  /** Toggle the collapsed/expanded state of a group */
+  toggleGroupCollapse: (id: string) => void;
+  /** Set the selected group ID (Inspector) */
+  setSelectedGroup: (id: string | null) => void;
+  /** Add or remove an item from the multi-select set (design mode) */
+  toggleMultiSelect: (id: string) => void;
+  /** Clear all multi-selected items */
+  clearMultiSelect: () => void;
 }
 
 // ─── HELPER: compute visible nodes/edges from current state ─────────────────
@@ -170,15 +211,18 @@ function deriveVisibility(
   allEdges: GraphEdge[],
   activeOwners: Set<string>,
   focusMode: boolean,
-  focusNodeId: string | null
+  focusNodeId: string | null,
+  groups: GraphGroup[] = []
 ): { visibleNodes: GraphNode[]; visibleEdges: GraphEdge[] } {
+  // Nodes inside a collapsed group are hidden regardless of owner filter
+  const hiddenByGroup = getHiddenNodeIds(groups);
+
   let visibleNodes: GraphNode[];
 
   if (focusMode && focusNodeId) {
     // Focus mode: show only the focused node + its direct parents and children
     const focusedNode = allNodes.find((node) => node.id === focusNodeId);
     if (!focusedNode) {
-      // The focused node no longer exists (shouldn't happen, but handle gracefully)
       return { visibleNodes: [], visibleEdges: [] };
     }
 
@@ -189,11 +233,15 @@ function deriveVisibility(
     const focusedIds = new Set([focusNodeId, ...directParentIds, ...directChildIds]);
 
     visibleNodes = allNodes.filter(
-      (node) => focusedIds.has(node.id) && activeOwners.has(node.owner)
+      (node) =>
+        focusedIds.has(node.id) &&
+        activeOwners.has(node.owner) &&
+        !hiddenByGroup.has(node.id)
     );
   } else {
-    // Normal mode: show all nodes whose owner is active
-    visibleNodes = allNodes.filter((node) => activeOwners.has(node.owner));
+    visibleNodes = allNodes.filter(
+      (node) => activeOwners.has(node.owner) && !hiddenByGroup.has(node.id)
+    );
   }
 
   const visibleIdSet = new Set(visibleNodes.map((node) => node.id));
@@ -254,6 +302,9 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   designDirty: false,
   undoStack: [],
   redoStack: [],
+  groups: [],
+  multiSelectIds: [],
+  selectedGroupId: null,
   currentFileName: null,
   fileHandle: null,
 
@@ -283,6 +334,9 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       designDirty: false,
       undoStack: [],
       redoStack: [],
+      groups: [],
+      multiSelectIds: [],
+      selectedGroupId: null,
       currentFileName: null,
       fileHandle: null,
     });
@@ -306,8 +360,11 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     const ownerColors = assignOwnerColors(owners);
     const activeOwners = new Set(owners);
 
+    // Extract groups from savedLayout if present
+    const groups: GraphGroup[] = (savedLayout as { groups?: GraphGroup[] } | null)?.groups ?? [];
+
     const { visibleNodes, visibleEdges } = deriveVisibility(
-      nodes, allEdges, activeOwners, false, null
+      nodes, allEdges, activeOwners, false, null, groups
     );
 
     // ── Normalise savedLayout into the new two-view format ────────────────
@@ -361,6 +418,9 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       designDirty: false,
       undoStack: [],
       redoStack: [],
+      groups,
+      multiSelectIds: [],
+      selectedGroupId: null,
       transform: activeLayout ? activeLayout.transform : { x: 0, y: 0, k: 1 },
       currentFileName: fileName ?? null,
       fileHandle: null, // caller sets this via setFileHandle after loadData
@@ -385,7 +445,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       return;
     }
 
-    const undoSnapshot: UndoSnapshot = { nodes: [...state.allNodes], positions: { ...state.positions } };
+    const undoSnapshot: UndoSnapshot = { nodes: [...state.allNodes], positions: { ...state.positions }, groups: [...state.groups] };
     const undoStack = [...state.undoStack, undoSnapshot].slice(-50);
 
     const allNodes = [...state.allNodes, newNode];
@@ -401,7 +461,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     const activeOwners = new Set([...state.activeOwners, newNode.owner]);
 
     const { visibleNodes, visibleEdges } = deriveVisibility(
-      allNodes, allEdges, activeOwners, state.focusMode, state.focusNodeId
+      allNodes, allEdges, activeOwners, state.focusMode, state.focusNodeId, state.groups
     );
 
     // Place the new node centered on the click position
@@ -438,7 +498,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   updateNode: (id: string, changes: Partial<Omit<GraphNode, 'id'>>) => {
     const state = get();
 
-    const undoSnapshot: UndoSnapshot = { nodes: [...state.allNodes], positions: { ...state.positions } };
+    const undoSnapshot: UndoSnapshot = { nodes: [...state.allNodes], positions: { ...state.positions }, groups: [...state.groups] };
     const undoStack = [...state.undoStack, undoSnapshot].slice(-50);
 
     const allNodes = state.allNodes.map((node) =>
@@ -456,7 +516,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     ]);
 
     const { visibleNodes, visibleEdges } = deriveVisibility(
-      allNodes, state.allEdges, activeOwners, state.focusMode, state.focusNodeId
+      allNodes, state.allEdges, activeOwners, state.focusMode, state.focusNodeId, state.groups
     );
 
     set({ allNodes, visibleNodes, visibleEdges, ownerColors, activeOwners, designDirty: true, undoStack, redoStack: [] });
@@ -473,7 +533,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   deleteNode: (id: string) => {
     const state = get();
 
-    const undoSnapshot: UndoSnapshot = { nodes: [...state.allNodes], positions: { ...state.positions } };
+    const undoSnapshot: UndoSnapshot = { nodes: [...state.allNodes], positions: { ...state.positions }, groups: [...state.groups] };
     const undoStack = [...state.undoStack, undoSnapshot].slice(-50);
 
     // Remove from node list
@@ -494,11 +554,17 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     const positions = { ...state.positions };
     delete positions[id];
 
+    // Remove from any group's childNodeIds
+    const groups = state.groups.map((g) => ({
+      ...g,
+      childNodeIds: g.childNodeIds.filter((nid) => nid !== id),
+    }));
+
     const { visibleNodes, visibleEdges } = deriveVisibility(
-      allNodes, allEdges, state.activeOwners, state.focusMode, state.focusNodeId
+      allNodes, allEdges, state.activeOwners, state.focusMode, state.focusNodeId, groups
     );
 
-    set({ allNodes, allEdges, visibleNodes, visibleEdges, positions, selectedNodeId, designDirty: true, undoStack, redoStack: [] });
+    set({ allNodes, allEdges, visibleNodes, visibleEdges, positions, selectedNodeId, groups, designDirty: true, undoStack, redoStack: [] });
   },
 
   // ── addEdge ───────────────────────────────────────────────────────────────
@@ -518,7 +584,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     // Guard: no duplicate edges
     if (state.allEdges.find((edge) => edge.from === fromId && edge.to === toId)) return;
 
-    const undoSnapshot: UndoSnapshot = { nodes: [...state.allNodes], positions: { ...state.positions } };
+    const undoSnapshot: UndoSnapshot = { nodes: [...state.allNodes], positions: { ...state.positions }, groups: [...state.groups] };
     const undoStack = [...state.undoStack, undoSnapshot].slice(-50);
 
     // Add fromId to toNode's dependencies array
@@ -532,7 +598,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     const allEdges = rebuildEdgesFromNodes(allNodes);
 
     const { visibleNodes, visibleEdges } = deriveVisibility(
-      allNodes, allEdges, state.activeOwners, state.focusMode, state.focusNodeId
+      allNodes, allEdges, state.activeOwners, state.focusMode, state.focusNodeId, state.groups
     );
 
     set({ allNodes, allEdges, visibleNodes, visibleEdges, designDirty: true, undoStack, redoStack: [] });
@@ -548,7 +614,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   deleteEdge: (fromId: string, toId: string) => {
     const state = get();
 
-    const undoSnapshot: UndoSnapshot = { nodes: [...state.allNodes], positions: { ...state.positions } };
+    const undoSnapshot: UndoSnapshot = { nodes: [...state.allNodes], positions: { ...state.positions }, groups: [...state.groups] };
     const undoStack = [...state.undoStack, undoSnapshot].slice(-50);
 
     const allNodes = state.allNodes.map((node) => {
@@ -561,7 +627,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     const allEdges = rebuildEdgesFromNodes(allNodes);
 
     const { visibleNodes, visibleEdges } = deriveVisibility(
-      allNodes, allEdges, state.activeOwners, state.focusMode, state.focusNodeId
+      allNodes, allEdges, state.activeOwners, state.focusMode, state.focusNodeId, state.groups
     );
 
     set({ allNodes, allEdges, visibleNodes, visibleEdges, designDirty: true, undoStack, redoStack: [] });
@@ -641,7 +707,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   // ── setSelectedNode ───────────────────────────────────────────────────────
   setSelectedNode: (id: string | null) => set((s) => ({
     selectedNodeId: id,
-    // Clear the search glow when selecting a different node
+    selectedGroupId: null, // Selecting a node always clears group selection
     lastJumpedNodeId: s.lastJumpedNodeId && s.lastJumpedNodeId !== id ? null : s.lastJumpedNodeId,
   })),
 
@@ -657,18 +723,19 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     if (state.undoStack.length === 0) return;
     const prev = state.undoStack[state.undoStack.length - 1];
     const newUndoStack = state.undoStack.slice(0, -1);
-    const newRedoStack = [...state.redoStack, { nodes: [...state.allNodes], positions: { ...state.positions } }];
+    const newRedoStack = [...state.redoStack, { nodes: [...state.allNodes], positions: { ...state.positions }, groups: [...state.groups] }];
 
     const allNodes = prev.nodes;
+    const prevGroups = prev.groups ?? [];
     const allEdges = rebuildEdgesFromNodes(allNodes);
     const owners = [...new Set(allNodes.map((n) => n.owner))];
     const ownerColors = assignOwnerColors(owners, state.ownerColors);
     const activeOwners = new Set([...state.activeOwners].filter((o) => allNodes.some((n) => n.owner === o)));
-    const { visibleNodes, visibleEdges } = deriveVisibility(allNodes, allEdges, activeOwners, state.focusMode, state.focusNodeId);
+    const { visibleNodes, visibleEdges } = deriveVisibility(allNodes, allEdges, activeOwners, state.focusMode, state.focusNodeId, prevGroups);
 
     set({
       allNodes, allEdges, visibleNodes, visibleEdges,
-      positions: prev.positions, ownerColors, activeOwners,
+      positions: prev.positions, ownerColors, activeOwners, groups: prevGroups,
       undoStack: newUndoStack, redoStack: newRedoStack, designDirty: true,
     });
   },
@@ -679,18 +746,19 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     if (state.redoStack.length === 0) return;
     const next = state.redoStack[state.redoStack.length - 1];
     const newRedoStack = state.redoStack.slice(0, -1);
-    const newUndoStack = [...state.undoStack, { nodes: [...state.allNodes], positions: { ...state.positions } }];
+    const newUndoStack = [...state.undoStack, { nodes: [...state.allNodes], positions: { ...state.positions }, groups: [...state.groups] }];
 
     const allNodes = next.nodes;
+    const nextGroups = next.groups ?? [];
     const allEdges = rebuildEdgesFromNodes(allNodes);
     const owners = [...new Set(allNodes.map((n) => n.owner))];
     const ownerColors = assignOwnerColors(owners, state.ownerColors);
     const activeOwners = new Set([...state.activeOwners].filter((o) => allNodes.some((n) => n.owner === o)));
-    const { visibleNodes, visibleEdges } = deriveVisibility(allNodes, allEdges, activeOwners, state.focusMode, state.focusNodeId);
+    const { visibleNodes, visibleEdges } = deriveVisibility(allNodes, allEdges, activeOwners, state.focusMode, state.focusNodeId, nextGroups);
 
     set({
       allNodes, allEdges, visibleNodes, visibleEdges,
-      positions: next.positions, ownerColors, activeOwners,
+      positions: next.positions, ownerColors, activeOwners, groups: nextGroups,
       undoStack: newUndoStack, redoStack: newRedoStack, designDirty: true,
     });
   },
@@ -715,7 +783,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     }
 
     const { visibleNodes, visibleEdges } = deriveVisibility(
-      state.allNodes, state.allEdges, activeOwners, state.focusMode, state.focusNodeId
+      state.allNodes, state.allEdges, activeOwners, state.focusMode, state.focusNodeId, state.groups
     );
 
     // Compute fresh layout for the new visible set, then merge:
@@ -770,7 +838,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     const activeOwners = allActive ? new Set<string>() : new Set(allOwners);
 
     const { visibleNodes, visibleEdges } = deriveVisibility(
-      state.allNodes, state.allEdges, activeOwners, state.focusMode, state.focusNodeId
+      state.allNodes, state.allEdges, activeOwners, state.focusMode, state.focusNodeId, state.groups
     );
 
     const { positions: freshPositions, laneMetrics } = derivePositions(
@@ -809,7 +877,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     const state = get();
 
     const { visibleNodes, visibleEdges } = deriveVisibility(
-      state.allNodes, state.allEdges, state.activeOwners, state.focusMode, state.focusNodeId
+      state.allNodes, state.allEdges, state.activeOwners, state.focusMode, state.focusNodeId, state.groups
     );
 
     const { positions, laneMetrics } = derivePositions(
@@ -832,17 +900,23 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     const focusedNode = state.allNodes.find((node) => node.id === nodeId);
     if (!focusedNode) return;
 
-    // Save the current state for restoration on exit
-    const preFocusSnapshot: FocusSnapshot = {
-      viewModeAtEnter: state.viewMode,
-      positions: { ...state.positions },
-      transform: { ...state.transform },
-      visibleNodes: [...state.visibleNodes],
-      visibleEdges: [...state.visibleEdges],
-    };
+    // When re-focusing from within focus mode, keep the ORIGINAL pre-focus snapshot
+    // so that exit focus mode always restores to the full graph, not a previous
+    // focus neighborhood. Only capture a new snapshot on the first entry.
+    const preFocusSnapshot: FocusSnapshot =
+      state.focusMode && state.preFocusSnapshot
+        ? state.preFocusSnapshot
+        : {
+            viewModeAtEnter: state.viewMode,
+            positions: { ...state.positions },
+            laneMetrics: { ...state.laneMetrics },
+            transform: { ...state.transform },
+            visibleNodes: [...state.visibleNodes],
+            visibleEdges: [...state.visibleEdges],
+          };
 
     const { visibleNodes, visibleEdges } = deriveVisibility(
-      state.allNodes, state.allEdges, state.activeOwners, true, nodeId
+      state.allNodes, state.allEdges, state.activeOwners, true, nodeId, state.groups
     );
 
     const { positions, laneMetrics } = derivePositions(
@@ -865,24 +939,27 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     const snapshot = state.preFocusSnapshot;
 
     if (snapshot && snapshot.viewModeAtEnter === state.viewMode) {
-      // Same view mode as when focus was entered — restore the exact pre-focus layout.
-      // snapshot.transform is the exact camera the user had before double-clicking,
-      // so we set it directly. No fitToScreen call needed or wanted here.
+      // Re-derive visibility from the current allNodes/groups state rather than
+      // restoring the stale snapshot nodes. This correctly handles any group
+      // collapse/expand changes made during focus mode, preventing nodes from
+      // disappearing or appearing outside their groups on exit.
+      const { visibleNodes, visibleEdges } = deriveVisibility(
+        state.allNodes, state.allEdges, state.activeOwners, false, null, state.groups
+      );
       set({
         focusMode: false,
         focusNodeId: null,
         preFocusSnapshot: null,
-        visibleNodes: snapshot.visibleNodes,
-        visibleEdges: snapshot.visibleEdges,
+        visibleNodes,
+        visibleEdges,
         positions: snapshot.positions,
+        laneMetrics: snapshot.laneMetrics,
         transform: snapshot.transform,
       });
     } else {
-      // View mode changed while in focus — the snapshot belongs to a different view,
-      // so discard it and rebuild the full graph in the current view mode.
+      // View mode changed while in focus — discard snapshot, rebuild fresh.
       set({ focusMode: false, focusNodeId: null, preFocusSnapshot: null });
       get().rebuildGraph();
-      // Fit after React renders the fresh layout (rebuildGraph doesn't touch the camera)
       setTimeout(() => get().fitToScreen(), 60);
     }
   },
@@ -932,7 +1009,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   loadNamedLayout: (snapshot: LayoutSnapshot, viewMode: ViewMode) => {
     const state = get();
     const { visibleNodes, visibleEdges } = deriveVisibility(
-      state.allNodes, state.allEdges, state.activeOwners, false, null
+      state.allNodes, state.allEdges, state.activeOwners, false, null, state.groups
     );
 
     set({
@@ -986,4 +1063,189 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
 
     set({ transform: { x: offsetX, y: offsetY, k: scale } });
   },
+
+  // ── createGroup ───────────────────────────────────────────────────────────
+  createGroup: (childNodeIds, childGroupIds, data) => {
+    const state = get();
+
+    const undoSnapshot: UndoSnapshot = {
+      nodes: [...state.allNodes],
+      positions: { ...state.positions },
+      groups: [...state.groups],
+    };
+
+    const id = generateGroupId(state.groups);
+    const owners = deriveGroupOwners(childNodeIds, childGroupIds, state.allNodes, state.groups);
+
+    // Place the group polygon at the centroid of its children
+    const childPositions = childNodeIds
+      .map((nid) => state.positions[nid])
+      .filter(Boolean) as { x: number; y: number }[];
+    // Also include positions from child groups
+    childGroupIds.forEach((gid) => {
+      if (state.positions[gid]) childPositions.push(state.positions[gid]);
+    });
+
+    const cx = childPositions.length > 0
+      ? childPositions.reduce((s, p) => s + p.x, 0) / childPositions.length
+      : 200;
+    const cy = childPositions.length > 0
+      ? childPositions.reduce((s, p) => s + p.y, 0) / childPositions.length
+      : 200;
+
+    const newGroup: GraphGroup = {
+      id,
+      name: data.name,
+      description: data.description,
+      owners,
+      childNodeIds,
+      childGroupIds,
+      collapsed: false,
+    };
+
+    const groups = [...state.groups, newGroup];
+    const positions = { ...state.positions, [id]: { x: cx, y: cy } };
+
+    const { visibleNodes, visibleEdges } = deriveVisibility(
+      state.allNodes, state.allEdges, state.activeOwners, state.focusMode, state.focusNodeId, groups
+    );
+
+    set({
+      groups,
+      positions,
+      visibleNodes,
+      visibleEdges,
+      multiSelectIds: [],
+      designDirty: true,
+      undoStack: [...state.undoStack, undoSnapshot].slice(-50),
+      redoStack: [],
+    });
+  },
+
+  // ── updateGroup ───────────────────────────────────────────────────────────
+  updateGroup: (id, changes) => {
+    const state = get();
+    const groups = state.groups.map((g) => (g.id === id ? { ...g, ...changes } : g));
+
+    const { visibleNodes, visibleEdges } = deriveVisibility(
+      state.allNodes, state.allEdges, state.activeOwners, state.focusMode, state.focusNodeId, groups
+    );
+
+    set({ groups, visibleNodes, visibleEdges, designDirty: true });
+  },
+
+  // ── deleteGroup ───────────────────────────────────────────────────────────
+  deleteGroup: (id, dissolve = true) => {
+    const state = get();
+
+    const undoSnapshot: UndoSnapshot = {
+      nodes: [...state.allNodes],
+      positions: { ...state.positions },
+      groups: [...state.groups],
+    };
+
+    let groups = state.groups.filter((g) => g.id !== id);
+    const positions = { ...state.positions };
+
+    if (!dissolve) {
+      // Also remove all descendant nodes and groups
+      const toDelete = getAllDescendantNodeIds(id, state.groups);
+      const groupsToDelete = new Set(getAllDescendantGroupIds(id, state.groups));
+      groups = groups.filter((g) => !groupsToDelete.has(g.id));
+      let allNodes = state.allNodes.filter((n) => !toDelete.includes(n.id));
+      allNodes = allNodes.map((n) => ({
+        ...n,
+        dependencies: n.dependencies.filter((dep) => !toDelete.includes(dep)),
+      }));
+      toDelete.forEach((nid) => delete positions[nid]);
+      groupsToDelete.forEach((gid) => delete positions[gid]);
+      delete positions[id];
+
+      const allEdges = rebuildEdgesFromNodes(allNodes);
+      const { visibleNodes, visibleEdges } = deriveVisibility(
+        allNodes, allEdges, state.activeOwners, state.focusMode, state.focusNodeId, groups
+      );
+      set({
+        allNodes, allEdges, visibleNodes, visibleEdges, groups, positions,
+        designDirty: true,
+        undoStack: [...state.undoStack, undoSnapshot].slice(-50),
+        redoStack: [],
+      });
+      return;
+    }
+
+    // Dissolve: children remain as standalone; just remove the group entry and its position
+    delete positions[id];
+    // Remove from any parent group's childGroupIds
+    groups = groups.map((g) => ({
+      ...g,
+      childGroupIds: g.childGroupIds.filter((gid) => gid !== id),
+    }));
+
+    const { visibleNodes, visibleEdges } = deriveVisibility(
+      state.allNodes, state.allEdges, state.activeOwners, state.focusMode, state.focusNodeId, groups
+    );
+
+    set({
+      groups, positions, visibleNodes, visibleEdges,
+      designDirty: true,
+      undoStack: [...state.undoStack, undoSnapshot].slice(-50),
+      redoStack: [],
+    });
+  },
+
+  // ── toggleGroupCollapse ───────────────────────────────────────────────────
+  toggleGroupCollapse: (id) => {
+    const state = get();
+    const group = state.groups.find((g) => g.id === id);
+    const willCollapse = group && !group.collapsed;
+
+    const groups = state.groups.map((g) =>
+      g.id === id ? { ...g, collapsed: !g.collapsed } : g
+    );
+
+    // When collapsing, recalculate the polygon center from current child positions
+    // so the polygon appears where the content actually is, not at the stale creation-time centroid.
+    let positions = state.positions;
+    if (willCollapse && group) {
+      // Gather center points of all descendant nodes (node positions are top-left, so add half-size)
+      const descendantNodeIds = getAllDescendantNodeIds(id, state.groups);
+      const pts: { x: number; y: number }[] = [
+        ...descendantNodeIds
+          .map((nid) => state.positions[nid])
+          .filter((p): p is { x: number; y: number } => !!p)
+          .map((p) => ({ x: p.x + NODE_W / 2, y: p.y + NODE_H / 2 })),
+        // Child group positions are already centers
+        ...group.childGroupIds
+          .map((gid) => state.positions[gid])
+          .filter((p): p is { x: number; y: number } => !!p),
+      ];
+      if (pts.length > 0) {
+        const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+        const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+        positions = { ...state.positions, [id]: { x: cx, y: cy } };
+      }
+    }
+
+    const { visibleNodes, visibleEdges } = deriveVisibility(
+      state.allNodes, state.allEdges, state.activeOwners, state.focusMode, state.focusNodeId, groups
+    );
+
+    set({ groups, positions, visibleNodes, visibleEdges, designDirty: true });
+  },
+
+  // ── setSelectedGroup ──────────────────────────────────────────────────────
+  setSelectedGroup: (id) => set({ selectedGroupId: id, selectedNodeId: null }),
+
+  // ── toggleMultiSelect ─────────────────────────────────────────────────────
+  toggleMultiSelect: (id) => {
+    const state = get();
+    const ids = state.multiSelectIds;
+    set({
+      multiSelectIds: ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id],
+    });
+  },
+
+  // ── clearMultiSelect ──────────────────────────────────────────────────────
+  clearMultiSelect: () => set({ multiSelectIds: [] }),
 }));

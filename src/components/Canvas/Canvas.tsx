@@ -16,11 +16,18 @@ import React, { useRef, useCallback, useEffect, useState, useMemo } from 'react'
 import { useGraphStore } from '../../store/graphStore';
 import type { Transform } from '../../types/graph';
 import { NodeCard } from './NodeCard';
+import { GroupCard } from './GroupCard';
 import { EdgeLayer } from './EdgeLayer';
 import { LaneLayer } from './LaneLayer';
 import { MiniMap } from './MiniMap';
 import { GhostEdge } from './GhostEdge';
 import { DesignToolbar } from '../DesignMode/DesignToolbar';
+import {
+  computeGroupNestLevel,
+  getAllDescendantNodeIds,
+  getHiddenGroupIds,
+  getCollapsedGroupForNode,
+} from '../../utils/grouping';
 import styles from './Canvas.module.css';
 
 export function Canvas() {
@@ -30,9 +37,11 @@ export function Canvas() {
     focusMode, focusNodeId, exitFocusMode,
     designMode, designTool, connectSourceId, setConnectSource,
     addEdge, addNode, setSelectedNode,
-    allNodes, ownerColors, laneMetrics, viewMode,
+    allNodes, allEdges, ownerColors, laneMetrics, viewMode,
     enterFocusMode, hoveredNodeId, fitToScreen, clearGraph,
+    groups, toggleGroupCollapse, clearMultiSelect,
   } = useGraphStore();
+
 
   // ── Refs ──────────────────────────────────────────────────────────────
   const svgRef = useRef<SVGSVGElement>(null);
@@ -45,26 +54,72 @@ export function Canvas() {
   const [ghostTarget, setGhostTarget] = useState<{ x: number; y: number } | null>(null);
 
   const hasData = visibleNodes.length > 0 || allNodes.length > 0;
+
+  // ── Cross-group boundary edges ────────────────────────────────────────
+  // visibleEdges only contains edges where BOTH endpoints are visible nodes.
+  // When a node is inside a collapsed group its edges to/from outside nodes
+  // are dropped. We restore them here so they can be routed to the group proxy.
+  const displayEdges = useMemo(() => {
+    const hasCollapsed = groups.some((g) => g.collapsed);
+    if (!hasCollapsed) return visibleEdges;
+
+    // Build a node→outermost-collapsed-group map using the fixed getCollapsedGroupForNode
+    // so nested groups are handled correctly (outermost wins).
+    const nodeToGroup = new Map<string, string>();
+    const allNodeIds = new Set(allEdges.flatMap((e) => [e.from, e.to]));
+    allNodeIds.forEach((nid) => {
+      const outermost = getCollapsedGroupForNode(nid, groups);
+      if (outermost) nodeToGroup.set(nid, outermost.id);
+    });
+
+    const visibleNodeIds = new Set(visibleNodes.map((n) => n.id));
+    const included = new Set(visibleEdges.map((e) => `${e.from}|${e.to}`));
+    const extra: typeof visibleEdges = [];
+    const extraKeys = new Set<string>();
+
+    for (const edge of allEdges) {
+      if (included.has(`${edge.from}|${edge.to}`)) continue;
+      const fromGroup = nodeToGroup.get(edge.from);
+      const toGroup   = nodeToGroup.get(edge.to);
+      const fromVis   = visibleNodeIds.has(edge.from);
+      const toVis     = visibleNodeIds.has(edge.to);
+      const key = `${edge.from}|${edge.to}`;
+      if (extraKeys.has(key)) continue;
+      // Cross-boundary: one side visible node, other inside a collapsed group
+      if ((fromVis && toGroup) || (toVis && fromGroup)) {
+        extra.push(edge);
+        extraKeys.add(key);
+      // Both endpoints inside DIFFERENT collapsed groups
+      } else if (fromGroup && toGroup && fromGroup !== toGroup) {
+        extra.push(edge);
+        extraKeys.add(key);
+      }
+    }
+
+    return extra.length > 0 ? [...visibleEdges, ...extra] : visibleEdges;
+  }, [visibleEdges, visibleNodes, allEdges, groups]);
   const focusedNode = focusNodeId ? allNodes.find((n) => n.id === focusNodeId) : null;
 
   // ── Convert screen coordinates to SVG canvas coordinates ─────────────
-  // This is needed because the canvas has a pan/zoom transform applied.
-  // Without this conversion, click positions would be in screen space,
-  // not in the SVG coordinate space where nodes live.
+  // Reads transformRef (not transform state) so this callback is stable and
+  // never changes reference. A changing reference would re-render every NodeCard
+  // and GroupCard on every zoom tick, causing the CSS transform transition to
+  // fire on all nodes simultaneously — visible as flashing boxes during zoom.
   const screenToSvg = useCallback((clientX: number, clientY: number) => {
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return { x: 0, y: 0 };
+    const t = transformRef.current;
     return {
-      x: (clientX - rect.left - transform.x) / transform.k,
-      y: (clientY - rect.top - transform.y) / transform.k,
+      x: (clientX - rect.left - t.x) / t.k,
+      y: (clientY - rect.top - t.y) / t.k,
     };
-  }, [transform]);
+  }, []); // stable — reads transformRef at call-time, no deps needed
 
   // ── Pan: start on mousedown on SVG background ─────────────────────────
   function handleSvgMouseDown(e: React.MouseEvent<SVGSVGElement>) {
     // Only start panning if clicking directly on the SVG or graph root (not a node)
     const target = e.target as Element;
-    if (target.closest('.node-group') || target.closest('.edge-hit')) return;
+    if (target.closest('.node-group') || target.closest('.edge-hit') || target.closest('.group-overlay')) return;
     if (designMode && designTool === 'add') return; // Add tool uses click, not drag
 
     panState.current = {
@@ -100,6 +155,10 @@ export function Canvas() {
       saveLayoutToCache(); // Persist the new pan position
     }
   }
+
+  const handleGroupToggle = useCallback((groupId: string) => {
+    toggleGroupCollapse(groupId);
+  }, [toggleGroupCollapse]);
 
   // ── Scroll to zoom (centered on cursor position) ──────────────────────
   // React 18 attaches onWheel as a PASSIVE listener, which means
@@ -140,8 +199,9 @@ export function Canvas() {
     const target = e.target as Element;
     const clickedNode = target.closest('.node-group');
     const clickedEdge = target.closest('.edge-hit');
+    const clickedGroup = target.closest('.group-overlay');
 
-    if (designMode && designTool === 'add' && !clickedNode) {
+    if (designMode && designTool === 'add' && !clickedNode && !clickedGroup) {
       // Add mode: open the add-node modal at the click position
       const pt = screenToSvg(e.clientX, e.clientY);
       document.dispatchEvent(new CustomEvent('flowgraph:add-node', { detail: pt }));
@@ -149,7 +209,7 @@ export function Canvas() {
     }
 
     if (designMode && designTool === 'connect') {
-      if (!clickedNode && !clickedEdge) {
+      if (!clickedNode && !clickedEdge && !clickedGroup) {
         // Clicked empty space in connect mode — cancel the connection
         setConnectSource(null);
         setGhostTarget(null);
@@ -157,9 +217,10 @@ export function Canvas() {
       return;
     }
 
-    // Click on background in any mode — deselect node
-    if (!clickedNode) {
+    // Click on background — deselect and clear multi-select
+    if (!clickedNode && !clickedGroup) {
       setSelectedNode(null);
+      if (designMode) clearMultiSelect();
     }
   }
 
@@ -167,6 +228,7 @@ export function Canvas() {
   function handleSvgDblClick(e: React.MouseEvent<SVGSVGElement>) {
     const target = e.target as Element;
     if (target.closest('.node-group')) return; // Node dblclick handled in NodeCard
+    if (target.closest('.group-overlay')) return; // Group dblclick handled in GroupCard
     if (focusMode) exitFocusMode();
   }
 
@@ -186,39 +248,63 @@ export function Canvas() {
     return () => document.removeEventListener('keydown', handleKey);
   }, [connectSourceId, focusMode, exitFocusMode, setConnectSource]);
 
-  // ── Hover dim/highlight via direct DOM class manipulation ─────────────
-  // Bypasses React re-renders entirely: instead of setting store state that
-  // triggers all NodeCards to re-render, we directly add/remove CSS classes
-  // on the SVG elements. CSS transitions handle the visual smoothness.
+  // ── Hover highlight via direct DOM class manipulation ────────────────
+  // Positive-only: only the hovered node and its direct neighbors get visual
+  // treatment (.hovered / .neighbor classes). Non-hovered nodes are untouched.
+  //
+  // We deliberately do NOT dim non-hovered nodes. Any CSS change (opacity, fill,
+  // stroke) applied to ~140 leaf elements simultaneously invalidates paint tiles
+  // across the whole canvas. At high zoom those tiles are large and Chrome can't
+  // repaint them all in one frame — visible as grey/white box flicker everywhere.
   useEffect(() => {
     const graphRoot = document.getElementById('graph-root');
     if (!graphRoot) return;
 
-    if (!hoveredNodeId) {
-      graphRoot.removeAttribute('data-hovering');
-      graphRoot.querySelectorAll('.node-group.hovered, .node-group.neighbor').forEach((el) => {
-        el.classList.remove('hovered', 'neighbor');
-      });
-      return;
+    // Clear all highlight classes whenever hovered target changes
+    graphRoot.querySelectorAll('.hovered, .neighbor').forEach((el) => {
+      el.classList.remove('hovered', 'neighbor');
+    });
+
+    if (!hoveredNodeId) return;
+
+    // Determine neighbors — works for both node IDs and group IDs.
+    // Use allEdges (not visibleEdges) so edges into/out of collapsed groups are included.
+    // When a neighbor is inside a collapsed group, resolve to that group's ID instead.
+    const hovGroup = groups.find((g) => g.id === hoveredNodeId);
+    const directParents = new Set<string>();
+    const directChildren = new Set<string>();
+
+    function resolveToVisible(nodeId: string): string {
+      const collapsed = getCollapsedGroupForNode(nodeId, groups);
+      return collapsed ? collapsed.id : nodeId;
     }
 
-    const hovNode = allNodes.find((n) => n.id === hoveredNodeId);
-    const directParents = new Set(hovNode?.dependencies ?? []);
-    const directChildren = new Set(
-      visibleEdges.filter((e) => e.from === hoveredNodeId).map((e) => e.to)
-    );
+    if (hovGroup) {
+      const descendantIds = new Set(getAllDescendantNodeIds(hovGroup.id, groups));
+      for (const edge of allEdges) {
+        const fromIn = descendantIds.has(edge.from);
+        const toIn   = descendantIds.has(edge.to);
+        if (fromIn && !toIn)  directChildren.add(resolveToVisible(edge.to));
+        if (toIn   && !fromIn) directParents.add(resolveToVisible(edge.from));
+      }
+    } else {
+      const hovNode = allNodes.find((n) => n.id === hoveredNodeId);
+      (hovNode?.dependencies ?? []).forEach((id) => directParents.add(resolveToVisible(id)));
+      allEdges
+        .filter((e) => e.from === hoveredNodeId)
+        .forEach((e) => directChildren.add(resolveToVisible(e.to)));
+    }
 
-    graphRoot.setAttribute('data-hovering', '');
-    graphRoot.querySelectorAll('.node-group').forEach((el) => {
-      const id = el.getAttribute('data-id');
-      el.classList.remove('hovered', 'neighbor');
+    // Apply .hovered / .neighbor — only to the handful of relevant elements
+    graphRoot.querySelectorAll('.node-group, .group-overlay').forEach((el) => {
+      const id = el.getAttribute('data-id') ?? el.getAttribute('data-group-id');
       if (id === hoveredNodeId) {
         el.classList.add('hovered');
       } else if (id && (directParents.has(id) || directChildren.has(id))) {
         el.classList.add('neighbor');
       }
     });
-  }, [hoveredNodeId, allNodes, visibleEdges]);
+  }, [hoveredNodeId, allNodes, visibleEdges, groups]);
 
   // ── Stable focus-request handler (prevents NodeCard memo invalidation) ─
   const handleFocusRequest = useCallback((id: string) => {
@@ -332,13 +418,48 @@ export function Canvas() {
               viewMode={viewMode}
             />
           </g>
+
+          {/* Expanded group overlays — drawn below edges so they appear as background.
+              Sorted outer-first (highest nestLevel) so inner groups render last = on top,
+              ensuring inner groups capture clicks before outer group overlays do. */}
+          <g id="groups-expanded-layer">
+            {(() => {
+              const hiddenGroupIds = getHiddenGroupIds(groups);
+              return groups
+                .filter((g) => !g.collapsed && !hiddenGroupIds.has(g.id))
+                .sort((a, b) => computeGroupNestLevel(b.id, groups) - computeGroupNestLevel(a.id, groups));
+            })().map((group) => {
+              const childNodePositions = getAllDescendantNodeIds(group.id, groups)
+                .map((nid) => positions[nid])
+                .filter(Boolean) as { x: number; y: number }[];
+              const groupColor = ownerColors[group.owners[0]] ?? '#4f9eff';
+              const nestLevel = computeGroupNestLevel(group.id, groups);
+              const pos = positions[group.id] ?? { x: 0, y: 0 };
+              return (
+                <GroupCard
+                  key={group.id}
+                  group={group}
+                  position={pos}
+                  color={groupColor}
+                  childPositions={childNodePositions}
+                  screenToSvg={screenToSvg}
+                  nestLevel={nestLevel}
+                  onToggleCollapse={handleGroupToggle}
+                  laneMetrics={laneMetrics}
+                  viewMode={viewMode}
+                />
+              );
+            })}
+          </g>
+
           <g id="edges-layer">
             <EdgeLayer
-              edges={visibleEdges}
+              edges={displayEdges}
               positions={positions}
               designMode={designMode}
               ownerColors={ownerColors}
               nodes={visibleNodes}
+              groups={groups}
             />
             {/* Ghost edge shown while drawing a connection in design mode */}
             {designMode && connectSourceId && ghostTarget && (
@@ -359,6 +480,32 @@ export function Canvas() {
                 onFocusRequest={handleFocusRequest}
               />
             ))}
+          </g>
+
+          {/* Collapsed group polygons — drawn above nodes */}
+          <g id="groups-collapsed-layer">
+            {(() => {
+              const hiddenGroupIds = getHiddenGroupIds(groups);
+              return groups.filter((g) => g.collapsed && !hiddenGroupIds.has(g.id));
+            })().map((group) => {
+              const groupColor = ownerColors[group.owners[0]] ?? '#4f9eff';
+              const nestLevel = computeGroupNestLevel(group.id, groups);
+              const pos = positions[group.id] ?? { x: 0, y: 0 };
+              return (
+                <GroupCard
+                  key={group.id}
+                  group={group}
+                  position={pos}
+                  color={groupColor}
+                  childPositions={[]}
+                  screenToSvg={screenToSvg}
+                  nestLevel={nestLevel}
+                  onToggleCollapse={handleGroupToggle}
+                  laneMetrics={laneMetrics}
+                  viewMode={viewMode}
+                />
+              );
+            })}
           </g>
           </g>{/* end graph-content */}
         </g>

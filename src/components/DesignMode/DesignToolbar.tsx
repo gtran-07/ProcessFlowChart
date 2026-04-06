@@ -8,13 +8,18 @@ import type { DesignTool } from '../../types/graph';
 import styles from './DesignToolbar.module.css';
 
 const TOOL_HINTS: Record<DesignTool, string> = {
-  select: 'Drag nodes to reposition. Click to inspect.',
+  select: 'Click to select. Shift+click nodes or groups to multi-select, then ⬡ Group to create a group.',
   add: 'Click empty canvas to add a node at that position.',
   connect: 'Click source node → click target node to draw an edge.',
 };
 
 export function DesignToolbar() {
-  const { designTool, setDesignTool, selectedNodeId, undoStack, redoStack, undo, redo } = useGraphStore();
+  const {
+    designTool, setDesignTool,
+    selectedNodeId, selectedGroupId,
+    undoStack, redoStack, undo, redo,
+    multiSelectIds, clearMultiSelect, groups,
+  } = useGraphStore();
 
   // Ctrl+Z = undo, Ctrl+Y or Ctrl+Shift+Z = redo
   useEffect(() => {
@@ -29,12 +34,33 @@ export function DesignToolbar() {
     return () => document.removeEventListener('keydown', handleKey);
   }, [undo, redo]);
 
-  function handleEditClick() {
+  function handleEditNodeClick() {
     if (!selectedNodeId) return;
     document.dispatchEvent(
       new CustomEvent('flowgraph:edit-node', { detail: { nodeId: selectedNodeId } })
     );
   }
+
+  function handleEditGroupClick() {
+    if (!selectedGroupId) return;
+    document.dispatchEvent(
+      new CustomEvent('flowgraph:edit-group', { detail: { groupId: selectedGroupId } })
+    );
+  }
+
+  function handleCreateGroup() {
+    // Split multiSelectIds into nodes and groups
+    const groupIds = new Set(groups.map((g) => g.id));
+    const nodeIds = multiSelectIds.filter((id) => !groupIds.has(id));
+    const childGroupIds = multiSelectIds.filter((id) => groupIds.has(id));
+    document.dispatchEvent(
+      new CustomEvent('flowgraph:create-group', { detail: { nodeIds, groupIds: childGroupIds } })
+    );
+  }
+
+  const canCreateGroup = multiSelectIds.length >= 2 && designTool === 'select';
+  const hasNodeSelected = !!selectedNodeId;
+  const hasGroupSelected = !!selectedGroupId;
 
   return (
     <div className={styles.banner}>
@@ -61,13 +87,44 @@ export function DesignToolbar() {
 
       <div className={styles.sep} />
 
+      {/* Edit selected node */}
       <button
         className={styles.toolBtn}
-        onClick={handleEditClick}
-        disabled={!selectedNodeId}
-        title={selectedNodeId ? 'Edit selected node' : 'Select a node first'}
-        style={{ opacity: selectedNodeId ? 1 : 0.4 }}
+        onClick={handleEditNodeClick}
+        disabled={!hasNodeSelected}
+        title={hasNodeSelected ? 'Edit selected node' : 'Select a node first'}
+        style={{ opacity: hasNodeSelected ? 1 : 0.4 }}
       >Edit Node</button>
+
+      {/* Edit selected group */}
+      {hasGroupSelected && (
+        <button
+          className={styles.toolBtn}
+          onClick={handleEditGroupClick}
+          title="Edit selected group"
+        >Edit Group</button>
+      )}
+
+      {/* Create group from multi-select */}
+      {canCreateGroup && (
+        <>
+          <div className={styles.sep} />
+          <button
+            className={styles.toolBtn}
+            onClick={handleCreateGroup}
+            title={`Create group from ${multiSelectIds.length} selected items`}
+            style={{ background: 'rgba(167,139,250,0.15)', borderColor: '#a78bfa', color: '#a78bfa' }}
+          >
+            ⬡ Group ({multiSelectIds.length})
+          </button>
+          <button
+            className={styles.toolBtn}
+            onClick={clearMultiSelect}
+            title="Clear selection"
+            style={{ opacity: 0.6 }}
+          >✕ Clear</button>
+        </>
+      )}
 
       <div className={styles.sep} />
 
@@ -87,7 +144,11 @@ export function DesignToolbar() {
         style={{ opacity: redoStack.length === 0 ? 0.4 : 1 }}
       >↪ Redo</button>
 
-      <span className={styles.hint}>{TOOL_HINTS[designTool]}</span>
+      <span className={styles.hint}>
+        {multiSelectIds.length > 0 && designTool === 'select'
+          ? `${multiSelectIds.length} item${multiSelectIds.length !== 1 ? 's' : ''} selected — Shift+click to add more, then click ⬡ Group`
+          : TOOL_HINTS[designTool]}
+      </span>
     </div>
   );
 }
