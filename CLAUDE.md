@@ -12,6 +12,18 @@ No server required — runs entirely in the browser and can be hosted on GitHub 
 
 ---
 
+# USAGE LIMIT SURVIVAL
+
+/model sonnet
+One feature maximum per session
+/cost every 3 prompts
+/compact after each feature
+/clear between features
+
+# MISTAKE HANDLING
+
+When wrong: "Update CLAUDE.md with this rule"
+
 ## Commands
 
 ```bash
@@ -28,14 +40,14 @@ TypeScript compilation (`tsc`) and Vite bundling with no errors, the code is rea
 
 ## Tech Stack
 
-| Layer | Choice |
-|---|---|
-| UI | React 18 + TypeScript |
-| Build | Vite 5 |
-| State | Zustand (single store, no providers) |
-| Styling | CSS Modules + global CSS variables |
-| Rendering | Native SVG (no D3/Cytoscape) |
-| File I/O | File System Access API (Chrome/Edge) with `<input type="file">` / download fallback |
+| Layer     | Choice                                                                              |
+| --------- | ----------------------------------------------------------------------------------- |
+| UI        | React 18 + TypeScript                                                               |
+| Build     | Vite 5                                                                              |
+| State     | Zustand (single store, no providers)                                                |
+| Styling   | CSS Modules + global CSS variables                                                  |
+| Rendering | Native SVG (no D3/Cytoscape)                                                        |
+| File I/O  | File System Access API (Chrome/Edge) with `<input type="file">` / download fallback |
 
 ---
 
@@ -75,11 +87,13 @@ src/
 ## Architecture Rules
 
 ### State
+
 - **All state lives in `graphStore.ts`**. No component-level state for graph data.
 - Components call store actions; actions update state; React re-renders.
 - Never mutate store state directly from a component.
 
 ### JSON Format
+
 ```json
 {
   "nodes": [
@@ -98,29 +112,36 @@ src/
   }
 }
 ```
+
 Legacy format (plain `[ ... ]` array, no `_layout`) is still accepted on load.
 
 ### Serialization
+
 `buildExportPayload()` in `exportJson.ts` is the **single source of truth** for
 serialization. Both the download path and the File System Access API in-place
 write path call this function. Never duplicate the serialization logic.
 
 ### File I/O modes
-| Mode | When | Save behaviour |
-|---|---|---|
-| **Linked** (teal chip) | Opened via `showOpenFilePicker` / `showSaveFilePicker` in Chrome/Edge | Writes directly to file on disk — no download |
-| **Unlinked** (gray chip) | Opened via `<input type="file">` (Firefox/Safari) or new flowchart | Downloads a copy to the user's Downloads folder |
+
+| Mode                     | When                                                                  | Save behaviour                                  |
+| ------------------------ | --------------------------------------------------------------------- | ----------------------------------------------- |
+| **Linked** (teal chip)   | Opened via `showOpenFilePicker` / `showSaveFilePicker` in Chrome/Edge | Writes directly to file on disk — no download   |
+| **Unlinked** (gray chip) | Opened via `<input type="file">` (Firefox/Safari) or new flowchart    | Downloads a copy to the user's Downloads folder |
 
 After **Save As**, the returned `FileSystemFileHandle` replaces the old handle and
 `currentFileName` is updated to the new filename — so subsequent saves go to the
 new location.
 
 ### PDF Export
+
 `exportPdf.ts` exports via `window.print()`. Signature:
+
 ```ts
 exportToPdf(mode: 'current' | 'full', positions?, _ownerColors?, _nodeOwnerMap?, _transform?, viewMode?)
 ```
+
 Steps (all DOM changes are reverted in `afterprint`):
+
 1. **JS-based DOM isolation** — walks up from `#canvas-wrap` to `<body>`, hides all siblings at every level with `visibility:hidden`. Forces `#canvas-wrap` to `position:fixed; inset:0; background:#fff; z-index:99999`. Restoring is done by reverting inline styles. This is more reliable than `@media print` CSS for hiding the sidebar/header.
 2. **ViewBox setup**:
    - `'full'`: `computeFullBBox()` computes positions bbox + PADDING=80. In `'lanes'` mode, `minX` is clamped to `≤ -PADDING/2` so lane labels (drawn at x=0) are included. Sets viewBox; resets `#graph-root` transform to identity.
@@ -133,26 +154,31 @@ Steps (all DOM changes are reverted in `afterprint`):
 6. In `afterprint`: `restoreIsolation()`, removes injected `<g>`, restores edge attributes, restores viewBox/transform.
 
 Print CSS in `global.css` (`@media print`):
+
 - SVG forced to `100vw × 100vh`.
 - `print-color-adjust: exact` preserves colored node-card fills.
 - `#canvas-wrap::before` hidden (removes the dark dot-grid pseudo-element).
 - Non-SVG children of `#canvas-wrap` hidden (minimap, banners, tooltips).
 
 ### Custom Events (component decoupling)
-| Event | Fired by | Handled by |
-|---|---|---|
-| `flowgraph:open-guide` | App.tsx (Shift+?) / Header | UserGuideModal |
-| `flowgraph:toggle-sidebar` | Header | Sidebar |
-| `flowgraph:open-file-picker` | Canvas empty state | Header |
-| `flowgraph:add-node` | Canvas click (add tool) | NodeEditModal |
+
+| Event                        | Fired by                   | Handled by     |
+| ---------------------------- | -------------------------- | -------------- |
+| `flowgraph:open-guide`       | App.tsx (Shift+?) / Header | UserGuideModal |
+| `flowgraph:toggle-sidebar`   | Header                     | Sidebar        |
+| `flowgraph:open-file-picker` | Canvas empty state         | Header         |
+| `flowgraph:add-node`         | Canvas click (add tool)    | NodeEditModal  |
 
 ### Responsive Header
+
 All button text is wrapped in `<span className={styles.btnLabel}>`. At `< 920px`
 this class is hidden, leaving icon-only buttons. Tooltips always carry the full
 description so nothing is lost.
 
 ### Stable DOM IDs
+
 These IDs are used for direct DOM access — do not remove or rename them:
+
 - `#canvas-wrap` — the outer canvas container div
 - `#graph-root` — the SVG `<g>` that receives the pan/zoom transform
 - `#graph-content` — inner `<g>` that wraps lanes/edges/nodes (keyed for fade-in)
@@ -163,21 +189,25 @@ These IDs are used for direct DOM access — do not remove or rename them:
 ## Adding New Features
 
 ### New store field + action
+
 1. Add the field + action signature to the `GraphStore` interface.
 2. Add the field to the initial state object.
 3. Implement the action (the `set(...)` call) in the store body.
 
 ### New header button
+
 1. Add button JSX with `<span className={styles.btnLabel}>Label</span>` around the text.
 2. Add styles in `Header.module.css`.
 3. Icon-only responsive behaviour is handled automatically by the `< 920px` media query.
 
 ### New modal
+
 1. Create the component and have it listen for a custom event in `useEffect`.
 2. Dispatch the custom event from wherever it should be triggered.
 3. Render the modal in `App.tsx` (outside the layout flow, at the end of the JSX).
 
 ### Updating the User Guide
+
 Edit the `SECTIONS` array in `UserGuideModal.tsx`. The guide's search box uses
 `extractText()` to recursively pull plain text from the JSX — no separate keyword
 lists need to be maintained.
@@ -186,13 +216,13 @@ lists need to be maintained.
 
 ## Known Constraints & Gotchas
 
-| Issue | Cause | Fix in place |
-|---|---|---|
-| Black square flicker on hover | SVG `filter: drop-shadow` causes GPU compositing artifacts | Replaced with stroke-based glow on `.node-main-rect`; `will-change: opacity` on `.node-group` |
-| Header covers canvas content | `.svgCanvas { overflow: visible }` let filter regions paint outside SVG bounds | Changed to `overflow: hidden` |
-| Lane Y-drift on owner toggle | Old absolute Y positions become wrong when lanes shift | `toggleOwner` / `toggleAllOwners` translate Y positions by `newLane.y − oldLane.y` delta |
-| Firefox/Safari can't save in-place | No File System Access API | Graceful fallback: download a copy; broken-chain chip signals the mode |
-| `window.print()` is synchronous on some browsers | Print dialog may close before `afterprint` fires on Safari | Cleanup is idempotent — safe to call multiple times |
+| Issue                                            | Cause                                                                          | Fix in place                                                                                  |
+| ------------------------------------------------ | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| Black square flicker on hover                    | SVG `filter: drop-shadow` causes GPU compositing artifacts                     | Replaced with stroke-based glow on `.node-main-rect`; `will-change: opacity` on `.node-group` |
+| Header covers canvas content                     | `.svgCanvas { overflow: visible }` let filter regions paint outside SVG bounds | Changed to `overflow: hidden`                                                                 |
+| Lane Y-drift on owner toggle                     | Old absolute Y positions become wrong when lanes shift                         | `toggleOwner` / `toggleAllOwners` translate Y positions by `newLane.y − oldLane.y` delta      |
+| Firefox/Safari can't save in-place               | No File System Access API                                                      | Graceful fallback: download a copy; broken-chain chip signals the mode                        |
+| `window.print()` is synchronous on some browsers | Print dialog may close before `afterprint` fires on Safari                     | Cleanup is idempotent — safe to call multiple times                                           |
 
 ---
 
