@@ -18,6 +18,7 @@ export function Inspector() {
     selectedNodeId, allNodes, ownerColors, setSelectedNode, designMode,
     selectedGroupId, groups, setSelectedGroup,
     selectedPhaseId, phases, setSelectedPhaseId, deletePhase,
+    multiSelectIds,
   } = useGraphStore();
 
   const selectedNode = selectedNodeId
@@ -66,7 +67,7 @@ export function Inspector() {
     return () => document.removeEventListener('flowgraph:toggle-inspector', handleToggle);
   }, []);
 
-  const isOpen = hasSelection && userOpen;
+  const isOpen = hasSelection && userOpen && multiSelectIds.length <= 1;
 
   function handleClose() {
     setUserOpen(false);
@@ -243,6 +244,24 @@ export function Inspector() {
               </span>
             </div>
 
+            {(() => {
+              const groupPhase = phases.find((p) => (p.groupIds ?? []).includes(selectedGroup.id));
+              return (
+                <>
+                  <div className={styles.section}>Phase</div>
+                  <div className={styles.tags}>
+                    {groupPhase ? (
+                      <span className={styles.tag} style={{ borderColor: groupPhase.color, color: groupPhase.color }}>
+                        {groupPhase.name}
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 11, color: 'var(--text3)' }}>Unassigned</span>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
+
             {designMode && (
               <button
                 onClick={handleEditGroupClick}
@@ -300,6 +319,47 @@ export function Inspector() {
                 })
               )}
             </div>
+
+            {(() => {
+              const nodePhase = phases.find((p) => p.nodeIds.includes(selectedNode.id));
+              return (
+                <>
+                  <div className={styles.section}>Phase</div>
+                  <div className={styles.tags}>
+                    {nodePhase ? (
+                      <span
+                        className={styles.tag}
+                        style={{ borderColor: nodePhase.color, color: nodePhase.color }}
+                      >
+                        {nodePhase.name}
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 11, color: 'var(--text3)' }}>Unassigned</span>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
+
+            {(() => {
+              const nodeGroups = groups.filter((g) => g.childNodeIds.includes(selectedNode.id));
+              return (
+                <>
+                  <div className={styles.section}>Groups</div>
+                  <div className={styles.tags}>
+                    {nodeGroups.length === 0 ? (
+                      <span style={{ fontSize: 11, color: 'var(--text3)' }}>None</span>
+                    ) : (
+                      nodeGroups.map((g) => (
+                        <span key={g.id} className={`${styles.tag} ${styles.tagDep}`}>
+                          {g.name}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </>
+              );
+            })()}
 
             {/* Edit button — only shown in design mode */}
             {designMode && (

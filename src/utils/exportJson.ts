@@ -64,11 +64,17 @@ export function buildExportPayload(
   const hasGroups = groups && groups.length > 0;
   const hasPhases = phases && phases.length > 0;
 
+  // Serialize phases: omit groupIds when empty to keep JSON clean for graphs without group membership
+  const phasesData = phases?.map((p) => ({
+    ...p,
+    ...(p.groupIds && p.groupIds.length > 0 ? { groupIds: p.groupIds } : { groupIds: undefined }),
+  }));
+
   if (hasLayout) {
     return {
       nodes: nodeData,
       ...(hasGroups ? { groups } : {}),
-      ...(hasPhases ? { phases } : {}),
+      ...(hasPhases ? { phases: phasesData } : {}),
       _layout: {
         currentView: currentView ?? 'dag',
         dag: dagLayout ?? null,
@@ -81,7 +87,7 @@ export function buildExportPayload(
     return {
       nodes: nodeData,
       ...(hasGroups ? { groups } : {}),
-      ...(hasPhases ? { phases } : {}),
+      ...(hasPhases ? { phases: phasesData } : {}),
     };
   }
 

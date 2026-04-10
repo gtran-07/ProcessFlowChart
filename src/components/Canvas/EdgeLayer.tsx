@@ -28,7 +28,7 @@ interface EdgeLayerProps {
 }
 
 export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes, groups }: EdgeLayerProps) {
-  const { hoveredNodeId, deleteEdge, viewMode } = useGraphStore();
+  const { hoveredNodeId, deleteEdge, viewMode, designTool } = useGraphStore();
 
   /**
    * Resolve the effective position for an edge endpoint.
@@ -128,7 +128,7 @@ export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes, gr
         }
 
         function handleEdgeMouseEnter(e: React.MouseEvent) {
-          if (!designMode) return;
+          if (!designMode || designTool !== 'connect') return;
           // Show the delete tooltip near the cursor
           const tip = document.getElementById('edge-delete-tip');
           if (tip) {
@@ -142,7 +142,7 @@ export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes, gr
         }
 
         function handleEdgeMouseMove(e: React.MouseEvent) {
-          if (!designMode) return;
+          if (!designMode || designTool !== 'connect') return;
           const tip = document.getElementById('edge-delete-tip');
           if (tip) {
             tip.style.left = `${e.clientX + 14}px`;
@@ -151,7 +151,7 @@ export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes, gr
         }
 
         function handleEdgeMouseLeave() {
-          if (!designMode) return;
+          if (!designMode || designTool !== 'connect') return;
           const tip = document.getElementById('edge-delete-tip');
           if (tip) tip.style.display = 'none';
           const pathEl = document.querySelector(`[data-edge-from="${edge.from}"][data-edge-to="${edge.to}"] .edge-vis`);
@@ -159,7 +159,7 @@ export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes, gr
         }
 
         function handleEdgeClick(e: React.MouseEvent) {
-          if (!designMode) return;
+          if (!designMode || designTool !== 'connect') return;
           e.stopPropagation();
           const tip = document.getElementById('edge-delete-tip');
           if (tip) tip.style.display = 'none';

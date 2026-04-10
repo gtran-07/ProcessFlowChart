@@ -37,6 +37,7 @@ import {
   rebuildEdgesFromNodes,
   enforcePhaseZones,
   pushNodesOutOfPhaseBand,
+  enforceAllPhaseBoundaries,
   NODE_W,
   NODE_H,
   LANE_LABEL_W,
@@ -211,8 +212,8 @@ export interface GraphStore {
   clearMultiSelect: () => void;
 
   // ── Phase actions ──────────────────────────────────────────────────────────
-  /** Create a new phase, optionally pre-assigning nodes */
-  createPhase: (nodeIds: string[], data: { name: string; description: string; color?: string }) => void;
+  /** Create a new phase, optionally pre-assigning nodes and/or collapsed groups */
+  createPhase: (nodeIds: string[], data: { name: string; description: string; color?: string }, groupIds?: string[]) => void;
   /** Collapse a phase band to a narrow strip */
   collapsePhase: (id: string) => void;
   /** Expand a previously collapsed phase band */
@@ -227,6 +228,14 @@ export interface GraphStore {
   assignNodesToPhase: (nodeIds: string[], phaseId: string) => void;
   /** Remove a set of nodes from whichever phase they belong to */
   removeNodesFromPhase: (nodeIds: string[]) => void;
+  /** Assign a set of collapsed groups to a phase, removing them from any previous phase first */
+  assignGroupsToPhase: (groupIds: string[], phaseId: string) => void;
+  /** Remove a set of groups from whichever phase they belong to */
+  removeGroupsFromPhase: (groupIds: string[]) => void;
+  /** Push all non-member nodes and collapsed groups out of the given phase band, respecting other phase bands */
+  pushNonMembersOutOfPhase: (phaseId: string) => void;
+  /** Re-assign phase sequence numbers by ascending mean-X of member nodes */
+  reorderPhasesByPosition: () => void;
   /** Set the selected phase ID (Inspector) */
   setSelectedPhaseId: (id: string | null) => void;
   /** Set the focused phase ID (Navigator spotlight) */
@@ -442,12 +451,17 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       ? derivePositions(visibleNodes, visibleEdges, restoredViewMode, activeOwners, nodes)
       : derivePositions(visibleNodes, visibleEdges, 'dag', activeOwners, nodes, phases);
 
+    const rawActivePositions = activeLayout ? activeLayout.positions : freshPositions;
+    const activePositions = restoredViewMode === 'lanes' && phases.length > 0
+      ? enforceAllPhaseBoundaries(rawActivePositions, phases, groups, GROUP_R, LANE_LABEL_W)
+      : rawActivePositions;
+
     set({
       allNodes: nodes,
       allEdges,
       visibleNodes,
       visibleEdges,
-      positions: activeLayout ? activeLayout.positions : freshPositions,
+      positions: activePositions,
       laneMetrics,
       activeOwners,
       ownerColors,
@@ -743,11 +757,17 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     const cachedLayout = !state.focusMode ? cache[mode] : null;
 
     if (cachedLayout) {
-      // Restore the exact layout the user left behind in this view mode
+      // Restore the layout the user left behind, then re-enforce phase zones in case
+      // phases were added/changed since the cache was saved.
+      const restoredPositions = state.phases.length > 0
+        ? mode === 'dag'
+          ? enforcePhaseZones(cachedLayout.positions, state.phases, NODE_W)
+          : enforceAllPhaseBoundaries(cachedLayout.positions, state.phases, state.groups, GROUP_R, LANE_LABEL_W)
+        : cachedLayout.positions;
       set({
         viewMode: mode,
         layoutCache: cache,
-        positions: cachedLayout.positions,
+        positions: restoredPositions,
         transform: cachedLayout.transform,
         laneMetrics: mode === 'lanes'
           ? computeLaneLayout(state.visibleNodes, state.visibleEdges, state.activeOwners, state.allNodes).laneMetrics
@@ -755,9 +775,12 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       });
     } else {
       // No cache (or in focus mode) — compute fresh positions for the current visible set
-      const { positions, laneMetrics } = derivePositions(
+      const { positions: rawPositions, laneMetrics } = derivePositions(
         state.visibleNodes, state.visibleEdges, mode, state.activeOwners, state.allNodes
       );
+      const positions = mode === 'lanes' && state.phases.length > 0
+        ? enforceAllPhaseBoundaries(rawPositions, state.phases, state.groups, GROUP_R, LANE_LABEL_W)
+        : rawPositions;
       set({ viewMode: mode, layoutCache: cache, positions, laneMetrics });
       setTimeout(() => get().fitToScreen(), 60);
     }
@@ -881,7 +904,11 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
         ? null
         : state.selectedNodeId;
 
-    set({ activeOwners, visibleNodes, visibleEdges, positions, laneMetrics, selectedNodeId });
+    const finalPositions = state.viewMode === 'lanes' && state.phases.length > 0
+      ? enforceAllPhaseBoundaries(positions, state.phases, state.groups, GROUP_R, LANE_LABEL_W)
+      : positions;
+
+    set({ activeOwners, visibleNodes, visibleEdges, positions: finalPositions, laneMetrics, selectedNodeId });
   },
 
   // ── toggleAllOwners ───────────────────────────────────────────────────────
@@ -922,7 +949,11 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       });
     }
 
-    set({ activeOwners, visibleNodes, visibleEdges, positions, laneMetrics, selectedNodeId: null });
+    const finalPositions = state.viewMode === 'lanes' && state.phases.length > 0
+      ? enforceAllPhaseBoundaries(positions, state.phases, state.groups, GROUP_R, LANE_LABEL_W)
+      : positions;
+
+    set({ activeOwners, visibleNodes, visibleEdges, positions: finalPositions, laneMetrics, selectedNodeId: null });
   },
 
   // ── rebuildGraph ──────────────────────────────────────────────────────────
@@ -940,9 +971,13 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       state.allNodes, state.allEdges, state.activeOwners, state.focusMode, state.focusNodeId, state.groups
     );
 
-    const { positions, laneMetrics } = derivePositions(
+    const { positions: rawPositions, laneMetrics } = derivePositions(
       visibleNodes, visibleEdges, state.viewMode, state.activeOwners, state.allNodes, state.phases
     );
+
+    const positions = state.viewMode === 'lanes' && state.phases.length > 0
+      ? enforceAllPhaseBoundaries(rawPositions, state.phases, state.groups, GROUP_R, LANE_LABEL_W)
+      : rawPositions;
 
     set({ visibleNodes, visibleEdges, positions, laneMetrics });
   },
@@ -1072,8 +1107,12 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       state.allNodes, state.allEdges, state.activeOwners, false, null, state.groups
     );
 
+    const enforcedPositions = viewMode === 'lanes' && state.phases.length > 0
+      ? enforceAllPhaseBoundaries(snapshot.positions, state.phases, state.groups, GROUP_R, LANE_LABEL_W)
+      : snapshot.positions;
+
     set({
-      positions: snapshot.positions,
+      positions: enforcedPositions,
       transform: snapshot.transform,
       viewMode,
       visibleNodes,
@@ -1221,12 +1260,20 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       groupsToDelete.forEach((gid) => delete positions[gid]);
       delete positions[id];
 
+      // Remove the deleted group and all its descendants from any phase they belong to
+      const allDeletedGroupIds = new Set([id, ...groupsToDelete]);
+      const phasesAfterDelete = state.phases.map((p) => ({
+        ...p,
+        groupIds: (p.groupIds ?? []).filter((gid) => !allDeletedGroupIds.has(gid)),
+      }));
+
       const allEdges = rebuildEdgesFromNodes(allNodes);
       const { visibleNodes, visibleEdges } = deriveVisibility(
         allNodes, allEdges, state.activeOwners, state.focusMode, state.focusNodeId, groups
       );
       set({
         allNodes, allEdges, visibleNodes, visibleEdges, groups, positions,
+        phases: phasesAfterDelete,
         designDirty: true,
         undoStack: [...state.undoStack, undoSnapshot].slice(-50),
         redoStack: [],
@@ -1242,12 +1289,18 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       childGroupIds: g.childGroupIds.filter((gid) => gid !== id),
     }));
 
+    // Remove the group from any phase it belongs to
+    const phases = state.phases.map((p) => ({
+      ...p,
+      groupIds: (p.groupIds ?? []).filter((gid) => gid !== id),
+    }));
+
     const { visibleNodes, visibleEdges } = deriveVisibility(
       state.allNodes, state.allEdges, state.activeOwners, state.focusMode, state.focusNodeId, groups
     );
 
     set({
-      groups, positions, visibleNodes, visibleEdges,
+      groups, positions, visibleNodes, visibleEdges, phases,
       designDirty: true,
       undoStack: [...state.undoStack, undoSnapshot].slice(-50),
       redoStack: [],
@@ -1310,7 +1363,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   clearMultiSelect: () => set({ multiSelectIds: [] }),
 
   // ── createPhase ───────────────────────────────────────────────────────────
-  createPhase: (nodeIds, data) => {
+  createPhase: (nodeIds, data, groupIds = []) => {
     const state = get();
 
     const undoSnapshot: UndoSnapshot = {
@@ -1332,13 +1385,15 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       description: data.description,
       color: data.color ?? PHASE_PALETTE[colorIdx],
       nodeIds,
+      groupIds,
       sequence: nextSeq,
     };
 
-    // Remove these nodes from any existing phase
+    // Remove these nodes/groups from any existing phase
     const phases = state.phases.map((p) => ({
       ...p,
       nodeIds: p.nodeIds.filter((nid) => !nodeIds.includes(nid)),
+      groupIds: (p.groupIds ?? []).filter((gid) => !groupIds.includes(gid)),
     }));
 
     const allPhasesAfterCreate = [...phases, newPhase];
@@ -1349,9 +1404,18 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       NODE_W
     );
 
+    const otherMode: ViewMode = state.viewMode === 'dag' ? 'lanes' : 'dag';
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { [otherMode]: _dropped, ...cacheWithoutOther } = state.layoutCache;
+    const updatedCache: Record<string, LayoutSnapshot> = {
+      ...cacheWithoutOther,
+      [state.viewMode]: { positions: adjustedPositions, transform: state.transform },
+    };
+
     set({
       phases: allPhasesAfterCreate,
       positions: adjustedPositions,
+      layoutCache: updatedCache,
       designDirty: true,
       undoStack: [...state.undoStack, undoSnapshot].slice(-50),
       redoStack: [],
@@ -1400,7 +1464,19 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       // Remove from all other phases
       return { ...p, nodeIds: p.nodeIds.filter((nid) => !nodeIds.includes(nid)) };
     });
-    set({ phases, designDirty: true });
+
+    // Push non-members out of the (potentially expanded) phase band
+    const adjustedPositions = pushNodesOutOfPhaseBand(state.positions, phases, phaseId, NODE_W);
+
+    const otherMode: ViewMode = state.viewMode === 'dag' ? 'lanes' : 'dag';
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { [otherMode]: _dropped, ...cacheWithoutOther } = state.layoutCache;
+    const updatedCache: Record<string, LayoutSnapshot> = {
+      ...cacheWithoutOther,
+      [state.viewMode]: { positions: adjustedPositions, transform: state.transform },
+    };
+
+    set({ phases, positions: adjustedPositions, layoutCache: updatedCache, designDirty: true });
   },
 
   // ── removeNodesFromPhase ──────────────────────────────────────────────────
@@ -1411,6 +1487,75 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       nodeIds: p.nodeIds.filter((nid) => !nodeIds.includes(nid)),
     }));
     set({ phases, designDirty: true });
+  },
+
+  // ── assignGroupsToPhase ───────────────────────────────────────────────────
+  assignGroupsToPhase: (groupIds, phaseId) => {
+    const state = get();
+    const phases = state.phases.map((p) => {
+      if (p.id === phaseId) {
+        const merged = [...new Set([...(p.groupIds ?? []), ...groupIds])];
+        return { ...p, groupIds: merged };
+      }
+      return { ...p, groupIds: (p.groupIds ?? []).filter((gid) => !groupIds.includes(gid)) };
+    });
+
+    const adjustedPositions = pushNodesOutOfPhaseBand(
+      state.positions, phases, phaseId, NODE_W, state.groups, GROUP_R,
+      state.viewMode === 'lanes' ? LANE_LABEL_W : undefined
+    );
+
+    const otherMode: ViewMode = state.viewMode === 'dag' ? 'lanes' : 'dag';
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { [otherMode]: _dropped, ...cacheWithoutOther } = state.layoutCache;
+    const updatedCache: Record<string, LayoutSnapshot> = {
+      ...cacheWithoutOther,
+      [state.viewMode]: { positions: adjustedPositions, transform: state.transform },
+    };
+
+    set({ phases, positions: adjustedPositions, layoutCache: updatedCache, designDirty: true });
+  },
+
+  // ── removeGroupsFromPhase ─────────────────────────────────────────────────
+  removeGroupsFromPhase: (groupIds) => {
+    const state = get();
+    const phases = state.phases.map((p) => ({
+      ...p,
+      groupIds: (p.groupIds ?? []).filter((gid) => !groupIds.includes(gid)),
+    }));
+    set({ phases, designDirty: true });
+  },
+
+  // ── pushNonMembersOutOfPhase ──────────────────────────────────────────────
+  pushNonMembersOutOfPhase: (phaseId) => {
+    const state = get();
+    const adjustedPositions = pushNodesOutOfPhaseBand(
+      state.positions,
+      state.phases,
+      phaseId,
+      NODE_W,
+      state.groups,
+      GROUP_R,
+      state.viewMode === 'lanes' ? LANE_LABEL_W : undefined
+    );
+    get().saveLayoutToCache();
+    set({ positions: adjustedPositions, designDirty: true });
+  },
+
+  // ── reorderPhasesByPosition ───────────────────────────────────────────────
+  reorderPhasesByPosition: () => {
+    const { phases, positions } = get();
+    const withMeanX = phases.map((ph) => {
+      const pts = ph.nodeIds.map((nid) => positions[nid]).filter(Boolean) as { x: number; y: number }[];
+      const meanX = pts.length > 0 ? pts.reduce((s, p) => s + p.x, 0) / pts.length : Infinity;
+      return { id: ph.id, meanX };
+    });
+    withMeanX.sort((a, b) => a.meanX - b.meanX);
+    const updated = phases.map((ph) => ({
+      ...ph,
+      sequence: withMeanX.findIndex((w) => w.id === ph.id),
+    }));
+    set({ phases: updated, designDirty: true });
   },
 
   // ── setSelectedPhaseId ────────────────────────────────────────────────────

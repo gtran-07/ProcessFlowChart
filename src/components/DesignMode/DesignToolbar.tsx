@@ -19,7 +19,7 @@ export function DesignToolbar() {
     selectedNodeId, selectedGroupId,
     undoStack, redoStack, undo, redo,
     multiSelectIds, clearMultiSelect, groups,
-    phases, assignNodesToPhase,
+    phases, assignNodesToPhase, assignGroupsToPhase,
   } = useGraphStore();
 
   const [phasePickerOpen, setPhasePickerOpen] = useState(false);
@@ -52,21 +52,33 @@ export function DesignToolbar() {
   }
 
   function getSelectedNodeIds() {
-    const groupIds = new Set(groups.map((g) => g.id));
+    const groupIdSet = new Set(groups.map((g) => g.id));
     if (multiSelectIds.length > 0) {
-      return multiSelectIds.filter((id) => !groupIds.has(id));
+      return multiSelectIds.filter((id) => !groupIdSet.has(id));
     }
     return selectedNodeId ? [selectedNodeId] : [];
   }
 
+  function getSelectedGroupIds() {
+    const groupIdSet = new Set(groups.map((g) => g.id));
+    if (multiSelectIds.length > 0) {
+      return multiSelectIds.filter((id) => groupIdSet.has(id));
+    }
+    return selectedGroupId ? [selectedGroupId] : [];
+  }
+
   function handleAssignToPhase(phaseId: string) {
-    assignNodesToPhase(getSelectedNodeIds(), phaseId);
+    const nodeIds = getSelectedNodeIds();
+    const groupIds = getSelectedGroupIds();
+    if (nodeIds.length > 0) assignNodesToPhase(nodeIds, phaseId);
+    if (groupIds.length > 0) assignGroupsToPhase(groupIds, phaseId);
     setPhasePickerOpen(false);
   }
 
   function handleAssignNewPhase() {
     const nodeIds = getSelectedNodeIds();
-    document.dispatchEvent(new CustomEvent('flowgraph:create-phase', { detail: { nodeIds } }));
+    const groupIds = getSelectedGroupIds();
+    document.dispatchEvent(new CustomEvent('flowgraph:create-phase', { detail: { nodeIds, groupIds } }));
     setPhasePickerOpen(false);
   }
 
@@ -150,8 +162,8 @@ export function DesignToolbar() {
 
       <div className={styles.sep} />
 
-      {/* Assign selected nodes to a phase */}
-      {(multiSelectIds.length >= 1 || !!selectedNodeId) && designTool === 'select' && (
+      {/* Assign selected nodes/groups to a phase */}
+      {(multiSelectIds.length >= 1 || !!selectedNodeId || !!selectedGroupId) && designTool === 'select' && (
         <div style={{ position: 'relative' }}>
           <button
             className={styles.toolBtn}

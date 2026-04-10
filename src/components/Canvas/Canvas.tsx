@@ -331,7 +331,7 @@ export function Canvas() {
     if (!clickedNode && !clickedGroup && !clickedPhase) {
       setSelectedNode(null);
       setSelectedPhaseId(null);
-      if (designMode) clearMultiSelect();
+      clearMultiSelect();
     }
   }
 
@@ -525,11 +525,14 @@ export function Canvas() {
             <PhaseLayer
               phases={phases}
               nodes={visibleNodes}
+              groups={groups}
               positions={adjustedPositions}
               focusedPhaseId={focusedPhaseId}
               selectedPhaseId={selectedPhaseId}
               canvasHeight={svgBandHeight}
               collapsedPhaseIds={collapsedPhaseIds}
+              viewMode={viewMode}
+              designMode={designMode}
               screenToSvg={screenToSvg}
               onPhaseClick={(id) => setSelectedPhaseId(id)}
               onPhaseDoubleClick={(id) => togglePhaseCollapse(id)}
@@ -653,8 +656,10 @@ export function Canvas() {
         </div>
       )}
 
-      {/* Phase Crowns — sticky context bars at top edge when headers scroll out of view */}
-      {hasData && phases.length > 0 && (
+      {/* Phase Crowns — sticky context bars at top edge when headers scroll out of view.
+          Only active in lanes mode: DAG bands have headers at arbitrary y positions,
+          so the "header scrolled above y=0" logic doesn't apply. */}
+      {hasData && phases.length > 0 && viewMode === 'lanes' && (
         <PhaseCrowns
           bands={crownBands}
           transform={transform}

@@ -25,6 +25,7 @@ export function PhaseEditModal() {
   const [mode, setMode] = useState<ModalMode>('create');
   const [editingPhaseId, setEditingPhaseId] = useState<string | null>(null);
   const [preselectedNodeIds, setPreselectedNodeIds] = useState<string[]>([]);
+  const [preselectedGroupIds, setPreselectedGroupIds] = useState<string[]>([]);
 
   // Form fields
   const [fieldName, setFieldName] = useState('');
@@ -36,14 +37,16 @@ export function PhaseEditModal() {
   // ── Listen for open events ──────────────────────────────────────────────
   useEffect(() => {
     function handleCreate(e: Event) {
-      const detail = (e as CustomEvent<{ nodeIds?: string[] }>).detail ?? {};
+      const detail = (e as CustomEvent<{ nodeIds?: string[]; groupIds?: string[] }>).detail ?? {};
       const nodeIds = detail.nodeIds ?? [];
+      const groupIds = detail.groupIds ?? [];
       // Pick the next color in the palette
       const nextColor = PHASE_PALETTE[phases.length % PHASE_PALETTE.length];
 
       setMode('create');
       setEditingPhaseId(null);
       setPreselectedNodeIds(nodeIds);
+      setPreselectedGroupIds(groupIds);
       setFieldName('');
       setFieldDesc('');
       setFieldColor(nextColor);
@@ -97,7 +100,7 @@ export function PhaseEditModal() {
         name: fieldName.trim(),
         description: fieldDesc.trim(),
         color: fieldColor,
-      });
+      }, preselectedGroupIds);
     } else if (editingPhaseId) {
       updatePhase(editingPhaseId, {
         name: fieldName.trim(),

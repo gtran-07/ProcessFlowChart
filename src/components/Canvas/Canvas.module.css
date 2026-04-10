@@ -109,9 +109,10 @@
 .emptyFootnote svg { flex-shrink: 0; margin-top: 2px; }
 
 .emptyCredit {
-  font-size: 10px;
-  color: var(--text3);
-  opacity: 0.5;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+  opacity: 0.75;
   margin-top: 18px;
   letter-spacing: 0.02em;
   pointer-events: none;
@@ -122,16 +123,17 @@
   position: absolute;
   bottom: 12px; left: 14px;
   font-family: var(--font-mono);
-  font-size: 9.5px;
-  color: var(--text3);
-  opacity: 0.4;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text2);
+  opacity: 0.7;
   pointer-events: none;
   user-select: none;
   z-index: 10;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
   transition: opacity .2s;
 }
-.canvasWrap:hover .credit { opacity: 0.65; }
+.canvasWrap:hover .credit { opacity: 1; }
 
 /* Focus mode banner */
 .focusBanner {

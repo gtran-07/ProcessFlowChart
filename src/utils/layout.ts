@@ -11,7 +11,7 @@
  * What does NOT belong here: any DOM manipulation, React state, or SVG rendering.
  */
 
-import type { GraphNode, GraphEdge, GraphPhase, Position, LaneMetrics } from '../types/graph';
+import type { GraphNode, GraphEdge, GraphPhase, GraphGroup, Position, LaneMetrics } from '../types/graph';
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
 
@@ -409,31 +409,45 @@ export function truncateText(text: string, maxLength: number): string {
  * the offending nodes to a "free zone" to the right of all phase bands, preserving
  * their relative x-ordering.
  *
- * Only runs in DAG view (caller responsibility). Phase-owned nodes are never moved.
+ * Only runs in DAG view (caller responsibility). Phase-owned nodes/groups are never moved.
  *
  * @param rawPositions - Output from computeLayout()
  * @param phases       - All phases (any order)
  * @param nodeW        - NODE_W constant (passed to avoid circular deps)
+ * @param groupR       - Optional GROUP_R (radius of collapsed group polygon)
  */
 export function enforcePhaseZones(
   rawPositions: Record<string, Position>,
   phases: GraphPhase[],
-  nodeW: number
+  nodeW: number,
+  groupR: number = 0
 ): Record<string, Position> {
   if (phases.length === 0) return rawPositions;
 
-  // Build nodeId → phaseId lookup
-  const nodeToPhaseId = new Map<string, string>();
-  phases.forEach((ph) => ph.nodeIds.forEach((nid) => nodeToPhaseId.set(nid, ph.id)));
+  // Build nodeId/groupId → phaseId lookup for all phase members
+  const memberToPhaseId = new Map<string, string>();
+  phases.forEach((ph) => {
+    ph.nodeIds.forEach((nid) => memberToPhaseId.set(nid, ph.id));
+    (ph.groupIds ?? []).forEach((gid) => memberToPhaseId.set(gid, ph.id));
+  });
 
-  // Compute each phase's x-range from its own assigned nodes' raw positions
+  // Compute each phase's x-range from its assigned nodes AND groups
   const sorted = [...phases].sort((a, b) => a.sequence - b.sequence);
   const phaseRanges: { id: string; minX: number; maxX: number }[] = [];
   sorted.forEach((ph) => {
-    const pts = ph.nodeIds.map((nid) => rawPositions[nid]).filter((p): p is Position => !!p);
-    if (pts.length === 0) return;
-    const minX = Math.min(...pts.map((p) => p.x)) - PHASE_PAD_X;
-    const maxX = Math.max(...pts.map((p) => p.x + nodeW)) + PHASE_PAD_X;
+    const nodePts = ph.nodeIds.map((nid) => rawPositions[nid]).filter((p): p is Position => !!p);
+    const groupPts = (ph.groupIds ?? []).map((gid) => rawPositions[gid]).filter((p): p is Position => !!p);
+    if (nodePts.length === 0 && groupPts.length === 0) return;
+    const xs: number[] = [
+      ...nodePts.map((p) => p.x),
+      ...groupPts.map((p) => p.x - groupR),
+    ];
+    const xMaxes: number[] = [
+      ...nodePts.map((p) => p.x + nodeW),
+      ...groupPts.map((p) => p.x + groupR),
+    ];
+    const minX = Math.min(...xs) - PHASE_PAD_X;
+    const maxX = Math.max(...xMaxes) + PHASE_PAD_X;
     phaseRanges.push({ id: ph.id, minX, maxX });
   });
 
@@ -441,10 +455,10 @@ export function enforcePhaseZones(
 
   const rightEdge = Math.max(...phaseRanges.map((r) => r.maxX));
 
-  // Find unphased nodes whose x overlaps any phase band
+  // Find unphased elements whose x overlaps any phase band
   const violators: { nodeId: string; origX: number }[] = [];
   Object.entries(rawPositions).forEach(([nodeId, pos]) => {
-    if (nodeToPhaseId.has(nodeId)) return; // phased node — never moved
+    if (memberToPhaseId.has(nodeId)) return; // phase member — never moved
     const inside = phaseRanges.some((r) => pos.x + nodeW > r.minX && pos.x < r.maxX);
     if (inside) violators.push({ nodeId, origX: pos.x });
   });
@@ -471,122 +485,367 @@ export function enforcePhaseZones(
 }
 
 /**
- * pushNodesOutOfPhaseBand — displaces unphased nodes that overlap a newly created phase band.
+ * pushNodesOutOfPhaseBand — displaces unphased nodes (and collapsed groups) that overlap a phase band.
  *
- * Called immediately after createPhase() so that nodes already on the canvas
- * don't visually sit inside the new phase band. Each violating node is pushed
- * toward its nearest exit: nodes whose center is left of the band center go left,
- * others go right. Both directions skip over any other existing phase bands.
+ * Called after createPhase(), assignNodesToPhase(), or a phase-drag completes so that
+ * non-member elements don't visually sit inside the band. Each violator is pushed toward
+ * its nearest exit (left or right) and both directions skip over any other existing phase
+ * bands to prevent cascading collisions.
  *
- * @param positions          - Current stored positions (not mutated)
- * @param allPhasesAfterCreate - Full phase list including the new phase
- * @param newPhaseId         - ID of the phase just created
- * @param nodeW              - NODE_W constant
+ * @param positions  - Current stored positions (not mutated)
+ * @param allPhases  - Full phase list including the triggering phase
+ * @param phaseId    - ID of the phase that triggered the push
+ * @param nodeW      - NODE_W constant
+ * @param groups     - Optional: all graph groups (enables collapsed-group push)
+ * @param groupR     - Optional: GROUP_R constant (radius of a collapsed group polygon)
  */
 export function pushNodesOutOfPhaseBand(
   positions: Record<string, Position>,
-  allPhasesAfterCreate: GraphPhase[],
-  newPhaseId: string,
-  nodeW: number
+  allPhases: GraphPhase[],
+  phaseId: string,
+  nodeW: number,
+  groups: GraphGroup[] = [],
+  groupR: number = 0,
+  minX?: number
 ): Record<string, Position> {
-  const newPhase = allPhasesAfterCreate.find((p) => p.id === newPhaseId);
-  if (!newPhase) return positions;
+  const targetPhase = allPhases.find((p) => p.id === phaseId);
+  if (!targetPhase) return positions;
 
-  // Compute the new phase band boundaries from its assigned nodes
-  const assignedPts = newPhase.nodeIds.map((nid) => positions[nid]).filter((p): p is Position => !!p);
-  if (assignedPts.length === 0) return positions;
+  // Compute the phase band boundaries from its assigned nodes AND groups
+  const assignedNodePts = targetPhase.nodeIds.map((nid) => positions[nid]).filter((p): p is Position => !!p);
+  const assignedGroupPts = (targetPhase.groupIds ?? []).map((gid) => positions[gid]).filter((p): p is Position => !!p);
+  if (assignedNodePts.length === 0 && assignedGroupPts.length === 0) return positions;
 
-  const bandMinX = Math.min(...assignedPts.map((p) => p.x)) - PHASE_PAD_X;
-  const bandMaxX = Math.max(...assignedPts.map((p) => p.x + nodeW)) + PHASE_PAD_X;
+  const allMemberXMins = [
+    ...assignedNodePts.map((p) => p.x),
+    ...assignedGroupPts.map((p) => p.x - groupR),
+  ];
+  const allMemberXMaxes = [
+    ...assignedNodePts.map((p) => p.x + nodeW),
+    ...assignedGroupPts.map((p) => p.x + groupR),
+  ];
+  const bandMinX = Math.min(...allMemberXMins) - PHASE_PAD_X;
+  const bandMaxX = Math.max(...allMemberXMaxes) + PHASE_PAD_X;
   const bandCenterX = (bandMinX + bandMaxX) / 2;
 
-  // Build set of ALL phased node IDs
+  // Build sets of ALL phased node IDs and group IDs
   const phasedNodeIds = new Set<string>();
-  allPhasesAfterCreate.forEach((ph) => ph.nodeIds.forEach((nid) => phasedNodeIds.add(nid)));
+  const phasedGroupIds = new Set<string>();
+  allPhases.forEach((ph) => {
+    ph.nodeIds.forEach((nid) => phasedNodeIds.add(nid));
+    (ph.groupIds ?? []).forEach((gid) => phasedGroupIds.add(gid));
+  });
 
-  // Compute all other phase bands (for collision avoidance when placing displaced nodes)
+  // Compute all other phase bands (for collision avoidance when placing displaced elements)
   const otherPhaseRanges: { minX: number; maxX: number }[] = [];
-  allPhasesAfterCreate.forEach((ph) => {
-    if (ph.id === newPhaseId) return;
-    const pts = ph.nodeIds.map((nid) => positions[nid]).filter((p): p is Position => !!p);
-    if (pts.length === 0) return;
-    const minX = Math.min(...pts.map((p) => p.x)) - PHASE_PAD_X;
-    const maxX = Math.max(...pts.map((p) => p.x + nodeW)) + PHASE_PAD_X;
+  allPhases.forEach((ph) => {
+    if (ph.id === phaseId) return;
+    const nodePts = ph.nodeIds.map((nid) => positions[nid]).filter((p): p is Position => !!p);
+    const grpPts = (ph.groupIds ?? []).map((gid) => positions[gid]).filter((p): p is Position => !!p);
+    if (nodePts.length === 0 && grpPts.length === 0) return;
+    const xs = [...nodePts.map((p) => p.x), ...grpPts.map((p) => p.x - groupR)];
+    const xMaxes = [...nodePts.map((p) => p.x + nodeW), ...grpPts.map((p) => p.x + groupR)];
+    const minX = Math.min(...xs) - PHASE_PAD_X;
+    const maxX = Math.max(...xMaxes) + PHASE_PAD_X;
     otherPhaseRanges.push({ minX, maxX });
   });
 
-  // Find violators: unphased nodes overlapping the new band
-  const rightGroup: { nodeId: string; origX: number }[] = [];
-  const leftGroup: { nodeId: string; origX: number }[] = [];
-
-  Object.entries(positions).forEach(([nodeId, pos]) => {
-    if (phasedNodeIds.has(nodeId)) return;
-    const overlaps = pos.x < bandMaxX && pos.x + nodeW > bandMinX;
-    if (!overlaps) return;
-    const nodeCenterX = pos.x + nodeW / 2;
-    if (nodeCenterX < bandCenterX) {
-      leftGroup.push({ nodeId, origX: pos.x });
-    } else {
-      rightGroup.push({ nodeId, origX: pos.x });
-    }
-  });
-
-  if (rightGroup.length === 0 && leftGroup.length === 0) return positions;
-
-  const adjusted = { ...positions };
-
-  // Helper: check if a candidate x-range overlaps any other phase band
-  function overlapsOtherPhase(candidateX: number): boolean {
+  // Helper: check if a candidate x-range (width = nodeW) overlaps any other phase band
+  function overlapsOtherPhase(candidateX: number, width: number = nodeW): boolean {
     return otherPhaseRanges.some(
-      (r) => candidateX < r.maxX && candidateX + nodeW > r.minX
+      (r) => candidateX < r.maxX && candidateX + width > r.minX
     );
   }
 
-  // Push-right: sort by x ascending, place after bandMaxX, skip other phase bands
-  if (rightGroup.length > 0) {
-    rightGroup.sort((a, b) => a.origX - b.origX);
+  const adjusted = { ...positions };
+
+  // ── Phase-on-phase: cascade push via worklist ────────────────────────────
+  // Each worklist entry is the band of the "pusher" phase and which phase it belongs to.
+  // Seeded with the dragged band; any phase that gets displaced is enqueued as the next pusher.
+  const resolved = new Set<string>(); // "pusherPhaseId|victimPhaseId" pairs already handled
+  const worklist: { pusherPhaseId: string; pusherMinX: number; pusherMaxX: number }[] = [
+    { pusherPhaseId: phaseId, pusherMinX: bandMinX, pusherMaxX: bandMaxX },
+  ];
+  const maxIter = allPhases.length * allPhases.length + 1;
+  let iter = 0;
+
+  while (worklist.length > 0 && iter++ < maxIter) {
+    const { pusherPhaseId, pusherMinX, pusherMaxX } = worklist.shift()!;
+    const pusherCenterX = (pusherMinX + pusherMaxX) / 2;
+
+    allPhases.forEach((victim) => {
+      if (victim.id === pusherPhaseId) return;
+      const key = `${pusherPhaseId}|${victim.id}`;
+      if (resolved.has(key)) return;
+
+      const pts = victim.nodeIds.map((nid) => adjusted[nid]).filter((p): p is Position => !!p);
+      const grpPts = (victim.groupIds ?? []).map((gid) => adjusted[gid]).filter((p): p is Position => !!p);
+      if (pts.length === 0 && grpPts.length === 0) return;
+      const victimXMins = [...pts.map((p) => p.x), ...grpPts.map((p) => p.x - groupR)];
+      const victimXMaxes = [...pts.map((p) => p.x + nodeW), ...grpPts.map((p) => p.x + groupR)];
+      const victimMinX = Math.min(...victimXMins) - PHASE_PAD_X;
+      const victimMaxX = Math.max(...victimXMaxes) + PHASE_PAD_X;
+      if (victimMinX >= pusherMaxX || victimMaxX <= pusherMinX) return;
+
+      resolved.add(key);
+
+      // Push direction: victim center relative to pusher center
+      const victimCenterX = (victimMinX + victimMaxX) / 2;
+      let pushRight = victimCenterX >= pusherCenterX;
+      const minNodeX = pts.length > 0 ? Math.min(...pts.map((p) => p.x)) : Math.min(...grpPts.map((p) => p.x - groupR));
+      const maxNodeRightX = pts.length > 0 ? Math.max(...pts.map((p) => p.x + nodeW)) : Math.max(...grpPts.map((p) => p.x + groupR));
+
+      // In lanes view, check if pushing left would place the leftmost victim node past the
+      // boundary. Left-push lands the leftmost node at: pusherMinX - GAP_X - maxNodeRightX + minNodeX.
+      if (!pushRight && minX !== undefined &&
+          pusherMinX - GAP_X - maxNodeRightX + minNodeX < minX) {
+        pushRight = true;
+      }
+
+      victim.nodeIds.forEach((nid) => {
+        const pos = adjusted[nid];
+        if (!pos) return;
+        if (pushRight) {
+          adjusted[nid] = { ...pos, x: pusherMaxX + GAP_X + (pos.x - minNodeX) };
+        } else {
+          adjusted[nid] = { ...pos, x: pusherMinX - GAP_X - nodeW - (maxNodeRightX - nodeW - pos.x) };
+        }
+      });
+      // Also move grouped members of the victim phase
+      (victim.groupIds ?? []).forEach((gid) => {
+        const pos = adjusted[gid];
+        if (!pos) return;
+        if (pushRight) {
+          adjusted[gid] = { ...pos, x: pusherMaxX + GAP_X + groupR + (pos.x - groupR - minNodeX) };
+        } else {
+          adjusted[gid] = { ...pos, x: pusherMinX - GAP_X - groupR - (maxNodeRightX - groupR - pos.x) };
+        }
+      });
+
+      // Compute new band after displacement and enqueue as next pusher
+      const newNodePts = victim.nodeIds.map((nid) => adjusted[nid]).filter((p): p is Position => !!p);
+      const newGrpPts = (victim.groupIds ?? []).map((gid) => adjusted[gid]).filter((p): p is Position => !!p);
+      if (newNodePts.length === 0 && newGrpPts.length === 0) return;
+      const newMinXCalc = Math.min(...newNodePts.map((p) => p.x), ...newGrpPts.map((p) => p.x - groupR));
+      const newMaxXCalc = Math.max(...newNodePts.map((p) => p.x + nodeW), ...newGrpPts.map((p) => p.x + groupR));
+      const newMinX = newMinXCalc - PHASE_PAD_X;
+      const newMaxX = newMaxXCalc + PHASE_PAD_X;
+      worklist.push({ pusherPhaseId: victim.id, pusherMinX: newMinX, pusherMaxX: newMaxX });
+
+      // Keep otherPhaseRanges in sync for non-member push below
+      const rangeIdx = otherPhaseRanges.findIndex((r) => r.minX === victimMinX && r.maxX === victimMaxX);
+      if (rangeIdx !== -1) {
+        otherPhaseRanges[rangeIdx] = { minX: newMinX, maxX: newMaxX };
+      }
+    });
+  }
+
+  // ── Build final band bounds for all phases (dragged + cascaded) ──────────
+  const allFinalBands: { minX: number; maxX: number; centerX: number }[] = [];
+  allPhases.forEach((ph) => {
+    const pts = ph.nodeIds.map((nid) => adjusted[nid]).filter((p): p is Position => !!p);
+    const gPts = (ph.groupIds ?? []).map((gid) => adjusted[gid]).filter((p): p is Position => !!p);
+    if (pts.length === 0 && gPts.length === 0) return;
+    const xs = [...pts.map((p) => p.x), ...gPts.map((p) => p.x - groupR)];
+    const xMaxes = [...pts.map((p) => p.x + nodeW), ...gPts.map((p) => p.x + groupR)];
+    const minX = Math.min(...xs) - PHASE_PAD_X;
+    const maxX = Math.max(...xMaxes) + PHASE_PAD_X;
+    allFinalBands.push({ minX, maxX, centerX: (minX + maxX) / 2 });
+  });
+
+  // ── Node violators ────────────────────────────────────────────────────────
+  const rightNodes: { nodeId: string; origX: number }[] = [];
+  const leftNodes: { nodeId: string; origX: number }[] = [];
+
+  Object.entries(adjusted).forEach(([nodeId, pos]) => {
+    if (phasedNodeIds.has(nodeId)) return;
+    // Skip collapsed groups entirely — handled in the group-violators section below
+    if (groups.length > 0 && groups.some((g) => g.id === nodeId && g.collapsed)) return;
+    // Skip groups that are direct phase members
+    if (phasedGroupIds.has(nodeId)) return;
+    const band = allFinalBands.find((b) => pos.x < b.maxX && pos.x + nodeW > b.minX);
+    if (!band) return;
+    const nodeCenterX = pos.x + nodeW / 2;
+    if (nodeCenterX < band.centerX) {
+      leftNodes.push({ nodeId, origX: pos.x });
+    } else {
+      rightNodes.push({ nodeId, origX: pos.x });
+    }
+  });
+
+  // Push-left nodes; any that can't fit left of the lane boundary overflow to right-push.
+  const leftOverflow: { nodeId: string; origX: number }[] = [];
+  if (leftNodes.length > 0) {
+    leftNodes.sort((a, b) => b.origX - a.origX);
     const oldXToNewX = new Map<number, number>();
-    let nextX = bandMaxX + GAP_X;
-    rightGroup.forEach(({ origX }) => {
+    let nextX = bandMinX - GAP_X - nodeW;
+    leftNodes.forEach(({ nodeId, origX }) => {
       if (!oldXToNewX.has(origX)) {
         while (overlapsOtherPhase(nextX)) {
-          const blocking = otherPhaseRanges.find(
-            (r) => nextX < r.maxX && nextX + nodeW > r.minX
-          )!;
+          const blocking = otherPhaseRanges.find((r) => nextX < r.maxX && nextX + nodeW > r.minX)!;
+          nextX = blocking.minX - GAP_X - nodeW;
+        }
+        // No room to the left — send to right-push instead.
+        if (minX !== undefined && nextX < minX) {
+          leftOverflow.push({ nodeId, origX });
+          return;
+        }
+        oldXToNewX.set(origX, nextX);
+        nextX -= nodeW + GAP_X;
+      }
+    });
+    leftNodes.forEach(({ nodeId, origX }) => {
+      const newX = oldXToNewX.get(origX);
+      if (newX !== undefined) {
+        adjusted[nodeId] = { ...adjusted[nodeId], x: newX };
+      }
+    });
+  }
+
+  // Push-right nodes (including any left-push overflow).
+  const allRightNodes = [...rightNodes, ...leftOverflow];
+  if (allRightNodes.length > 0) {
+    allRightNodes.sort((a, b) => a.origX - b.origX);
+    const oldXToNewX = new Map<number, number>();
+    let nextX = bandMaxX + GAP_X;
+    allRightNodes.forEach(({ origX }) => {
+      if (!oldXToNewX.has(origX)) {
+        while (overlapsOtherPhase(nextX)) {
+          const blocking = otherPhaseRanges.find((r) => nextX < r.maxX && nextX + nodeW > r.minX)!;
           nextX = blocking.maxX + GAP_X;
         }
         oldXToNewX.set(origX, nextX);
         nextX += nodeW + GAP_X;
       }
     });
-    rightGroup.forEach(({ nodeId, origX }) => {
+    allRightNodes.forEach(({ nodeId, origX }) => {
       adjusted[nodeId] = { ...adjusted[nodeId], x: oldXToNewX.get(origX)! };
     });
   }
 
-  // Push-left: sort by x descending, place before bandMinX, skip other phase bands
-  if (leftGroup.length > 0) {
-    leftGroup.sort((a, b) => b.origX - a.origX);
-    const oldXToNewX = new Map<number, number>();
-    let nextX = bandMinX - GAP_X - nodeW;
-    leftGroup.forEach(({ origX }) => {
-      if (!oldXToNewX.has(origX)) {
-        while (overlapsOtherPhase(nextX)) {
-          const blocking = otherPhaseRanges.find(
-            (r) => nextX < r.maxX && nextX + nodeW > r.minX
-          )!;
-          nextX = blocking.minX - GAP_X - nodeW;
-        }
-        oldXToNewX.set(origX, nextX);
-        nextX -= nodeW + GAP_X;
+  // ── Collapsed group violators ─────────────────────────────────────────────
+  if (groups.length > 0 && groupR > 0) {
+    // Helper to get all descendant node IDs of a group (direct children + nested)
+    function getDescendantNodeIds(groupId: string): Set<string> {
+      const result = new Set<string>();
+      const stack = [groupId];
+      while (stack.length > 0) {
+        const gid = stack.pop()!;
+        const g = groups.find((gr) => gr.id === gid);
+        if (!g) continue;
+        g.childNodeIds.forEach((nid) => result.add(nid));
+        g.childGroupIds.forEach((cid) => stack.push(cid));
+      }
+      return result;
+    }
+
+    // A group belongs to a phase if it is directly in phase.groupIds,
+    // OR if any of its descendant nodes belong to the phase.
+    const phaseNodeSet = new Set(targetPhase.nodeIds);
+    const phaseGroupSet = new Set(targetPhase.groupIds ?? []);
+
+    const rightGroups: { groupId: string; origX: number }[] = [];
+    const leftGroups: { groupId: string; origX: number }[] = [];
+
+    groups.forEach((g) => {
+      if (!g.collapsed) return;
+      const pos = adjusted[g.id];
+      if (!pos) return;
+      // Skip if directly assigned to the target phase
+      if (phaseGroupSet.has(g.id)) return;
+      // Skip if it's a member of any phase (direct group membership in any phase)
+      if (phasedGroupIds.has(g.id)) return;
+      // Skip if it contains descendant nodes that belong to any phased node set
+      const descendants = getDescendantNodeIds(g.id);
+      if ([...descendants].some((nid) => phaseNodeSet.has(nid))) return;
+      const gLeft = pos.x - groupR;
+      const gRight = pos.x + groupR;
+      const band = allFinalBands.find((b) => gRight > b.minX && gLeft < b.maxX);
+      if (!band) return;
+      if (pos.x < band.centerX) {
+        leftGroups.push({ groupId: g.id, origX: pos.x });
+      } else {
+        rightGroups.push({ groupId: g.id, origX: pos.x });
       }
     });
-    leftGroup.forEach(({ nodeId, origX }) => {
-      adjusted[nodeId] = { ...adjusted[nodeId], x: oldXToNewX.get(origX)! };
+
+    // In lanes view, if there's no room to the left for even one group, reclassify all
+    // left-groups as right-groups so they don't get pushed behind the lane title.
+    if (minX !== undefined && bandMinX - groupR - GAP_X - groupR < minX) {
+      rightGroups.push(...leftGroups);
+      leftGroups.length = 0;
+    }
+
+    // Push-right collapsed groups
+    rightGroups.sort((a, b) => a.origX - b.origX);
+    rightGroups.forEach(({ groupId, origX: _ }) => {
+      let targetX = bandMaxX + groupR + GAP_X;
+      while (overlapsOtherPhase(targetX - groupR, groupR * 2)) {
+        const blocking = otherPhaseRanges.find(
+          (r) => targetX - groupR < r.maxX && targetX + groupR > r.minX
+        )!;
+        targetX = blocking.maxX + groupR + GAP_X;
+      }
+      adjusted[groupId] = { ...adjusted[groupId], x: targetX };
+    });
+
+    // Push-left collapsed groups
+    leftGroups.sort((a, b) => b.origX - a.origX);
+    leftGroups.forEach(({ groupId, origX: _ }) => {
+      let targetX = bandMinX - groupR - GAP_X;
+      while (overlapsOtherPhase(targetX - groupR, groupR * 2)) {
+        const blocking = otherPhaseRanges.find(
+          (r) => targetX - groupR < r.maxX && targetX + groupR > r.minX
+        )!;
+        targetX = blocking.minX - groupR - GAP_X;
+      }
+      adjusted[groupId] = { ...adjusted[groupId], x: targetX };
     });
   }
 
   return adjusted;
+}
+
+/**
+ * enforceAllPhaseBoundaries — applies the full lanes phase-enforcement pipeline to a position map.
+ *
+ * Used when restoring saved or cached positions into lanes view, where positions may have been
+ * computed under different rules (or in DAG view) and need to be brought into compliance.
+ *
+ * Steps (in order):
+ *  1. Clamp every position to x >= minX so nothing sits behind the lane label area.
+ *  2. Run pushNodesOutOfPhaseBand for each phase in sequence order, feeding the result of
+ *     each call into the next. This resolves inter-phase conflicts and non-member violations
+ *     using the same algorithm that runs during interactive drag.
+ *
+ * @param positions - Current stored positions (not mutated)
+ * @param phases    - All phases
+ * @param groups    - All graph groups (for collapsed-group push)
+ * @param groupR    - GROUP_R constant
+ * @param minX      - Left boundary (LANE_LABEL_W)
+ */
+export function enforceAllPhaseBoundaries(
+  positions: Record<string, Position>,
+  phases: GraphPhase[],
+  groups: GraphGroup[],
+  groupR: number,
+  minX: number
+): Record<string, Position> {
+  // Step 1: floor every x at the lane label boundary
+  let result: Record<string, Position> = {};
+  Object.entries(positions).forEach(([id, pos]) => {
+    result[id] = pos.x >= minX ? pos : { ...pos, x: minX };
+  });
+
+  // Step 2: push non-members out of each phase band in sequence order
+  const sorted = [...phases].sort((a, b) => a.sequence - b.sequence);
+  sorted.forEach((phase) => {
+    const hasMembersWithPositions = phase.nodeIds.some((nid) => result[nid]);
+    if (!hasMembersWithPositions) return;
+    result = pushNodesOutOfPhaseBand(result, phases, phase.id, NODE_W, groups, groupR, minX);
+  });
+
+  return result;
 }
 
 /**

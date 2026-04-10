@@ -15,7 +15,7 @@
 import React, { memo, useRef, useState } from 'react';
 import { useGraphStore } from '../../store/graphStore';
 import { computePolygonPoints, computeBoundingBox, GROUP_R, getAllDescendantNodeIds } from '../../utils/grouping';
-import { NODE_W, NODE_H } from '../../utils/layout';
+import { NODE_W, NODE_H, LANE_LABEL_W, PHASE_PAD_X } from '../../utils/layout';
 import type { GraphGroup, LaneMetrics, Position, ViewMode } from '../../types/graph';
 
 interface GroupCardProps {
@@ -84,6 +84,17 @@ export const GroupCard = memo(function GroupCard({
       moved: false,
     };
 
+    // Co-drag: if this group is part of a multi-select, move all selected items together
+    const initState = useGraphStore.getState();
+    const isInMultiSelect = initState.multiSelectIds.includes(group.id) && initState.multiSelectIds.length > 1;
+    const multiStartPositions: Record<string, { x: number; y: number }> = {};
+    if (isInMultiSelect) {
+      initState.multiSelectIds.forEach((id) => {
+        const pos = initState.positions[id];
+        if (pos) multiStartPositions[id] = { x: pos.x, y: pos.y };
+      });
+    }
+
     function onMove(me: MouseEvent) {
       if (!dragRef.current) return;
       const cur = screenToSvg(me.clientX, me.clientY);
@@ -95,28 +106,62 @@ export const GroupCard = memo(function GroupCard({
       }
       if (dragRef.current.moved) {
         groupRef.current?.classList.add('node-dragging');
-        let newX = dragRef.current.startNodeX + dx;
-        let newY = dragRef.current.startNodeY + dy;
 
-        // In LANE view, clamp vertical movement so the polygon stays within the
-        // vertical span of the lanes its nodes belong to.
-        if (viewMode === 'lanes' && group.owners.length > 0) {
-          const relevantLanes = group.owners
-            .map((owner) => laneMetrics[owner])
-            .filter((l): l is LaneMetrics => !!l);
-          if (relevantLanes.length > 0) {
-            const topY    = Math.min(...relevantLanes.map((l) => l.y));
-            const bottomY = Math.max(...relevantLanes.map((l) => l.y + l.height));
-            newY = Math.max(topY + GROUP_R, Math.min(bottomY - GROUP_R, newY));
+        if (isInMultiSelect) {
+          // Move all selected items, clamping each to its own lane in LANES view
+          const state = useGraphStore.getState();
+          const updates: Record<string, { x: number; y: number }> = {};
+          Object.entries(multiStartPositions).forEach(([id, pos]) => {
+            let newY = pos.y + dy;
+            if (state.viewMode === 'lanes') {
+              const n = state.allNodes.find((nd) => nd.id === id);
+              const g = state.groups.find((gr) => gr.id === id);
+              if (n) {
+                const lane = state.laneMetrics[n.owner];
+                if (lane) {
+                  const margin = 6;
+                  newY = Math.max(lane.y + margin, Math.min(lane.y + lane.height - NODE_H - margin, newY));
+                }
+              } else if (g) {
+                const relevantLanes = g.owners.map((o) => state.laneMetrics[o]).filter(Boolean);
+                if (relevantLanes.length > 0) {
+                  const topY = Math.min(...relevantLanes.map((l) => l.y));
+                  const bottomY = Math.max(...relevantLanes.map((l) => l.y + l.height));
+                  newY = Math.max(topY + GROUP_R, Math.min(bottomY - GROUP_R, newY));
+                }
+              }
+            }
+            updates[id] = { x: pos.x + dx, y: newY };
+          });
+          useGraphStore.setState((s) => ({ positions: { ...s.positions, ...updates } }));
+        } else {
+          let newX = dragRef.current.startNodeX + dx;
+          let newY = dragRef.current.startNodeY + dy;
+
+          // In LANE view, clamp X so the group stays right of the lane label,
+          // and clamp vertical movement so the polygon stays within the
+          // vertical span of the lanes its nodes belong to.
+          if (viewMode === 'lanes') {
+            newX = Math.max(LANE_LABEL_W, newX);
+            if (group.owners.length > 0) {
+              const relevantLanes = group.owners
+                .map((owner) => laneMetrics[owner])
+                .filter((l): l is LaneMetrics => !!l);
+              if (relevantLanes.length > 0) {
+                const topY    = Math.min(...relevantLanes.map((l) => l.y));
+                const bottomY = Math.max(...relevantLanes.map((l) => l.y + l.height));
+                newY = Math.max(topY + GROUP_R, Math.min(bottomY - GROUP_R, newY));
+              }
+            }
           }
-        }
 
-        useGraphStore.setState((s) => ({
-          positions: {
-            ...s.positions,
-            [group.id]: { x: newX, y: newY },
-          },
-        }));
+          useGraphStore.setState((s) => ({
+            positions: {
+              ...s.positions,
+              [group.id]: { x: newX, y: newY },
+            },
+          }));
+        }
       }
     }
 
@@ -124,46 +169,133 @@ export const GroupCard = memo(function GroupCard({
       if (dragRef.current?.moved) {
         const startX = dragRef.current.startNodeX;
         const startY = dragRef.current.startNodeY;
-
         const state = useGraphStore.getState();
         const { phases, positions, groups: allGroups } = state;
         const PHASE_PAD_X = 30;
-        const newX = positions[group.id]?.x ?? startX;
 
-        // Find phases the group belongs to via its descendant nodes
-        const descendantIds = new Set(getAllDescendantNodeIds(group.id, allGroups));
-        const myPhaseIds = new Set(
-          phases
-            .filter((ph) => ph.nodeIds.some((nid) => descendantIds.has(nid)))
-            .map((ph) => ph.id)
-        );
-
-        // Check if the group's new polygon position overlaps a foreign phase band
-        let shouldSnapBack = false;
-        for (const phase of phases) {
-          if (myPhaseIds.has(phase.id)) continue;
-          const assignedPositions = phase.nodeIds
-            .map((nid) => positions[nid])
-            .filter((p): p is { x: number; y: number } => !!p);
-          if (assignedPositions.length === 0) continue;
-          const bandMinX = Math.min(...assignedPositions.map((p) => p.x)) - PHASE_PAD_X;
-          const bandMaxX = Math.max(...assignedPositions.map((p) => p.x + NODE_W)) + PHASE_PAD_X;
-          // Group polygon center is at newX; radius is GROUP_R
-          if (newX + GROUP_R > bandMinX && newX - GROUP_R < bandMaxX) {
-            shouldSnapBack = true;
-            break;
+        if (isInMultiSelect) {
+          // Per-item phase snap-back for co-dragged nodes and groups
+          const snapBackUpdates: Record<string, { x: number; y: number }> = {};
+          Object.entries(multiStartPositions).forEach(([id, startPos]) => {
+            const newX = positions[id]?.x ?? startPos.x;
+            const n = state.allNodes.find((nd) => nd.id === id);
+            const g = state.groups.find((gr) => gr.id === id);
+            if (n) {
+              const myPhase = phases.find((ph) => ph.nodeIds.includes(id));
+              for (const phase of phases) {
+                if (myPhase && phase.id === myPhase.id) continue;
+                const assignedPos = phase.nodeIds
+                  .filter((nid) => nid !== id)
+                  .map((nid) => positions[nid])
+                  .filter((p): p is { x: number; y: number } => !!p);
+                if (assignedPos.length === 0) continue;
+                const bandMinX = Math.min(...assignedPos.map((p) => p.x)) - PHASE_PAD_X;
+                const bandMaxX = Math.max(...assignedPos.map((p) => p.x + NODE_W)) + PHASE_PAD_X;
+                if (newX + NODE_W > bandMinX && newX < bandMaxX) {
+                  snapBackUpdates[id] = startPos;
+                  break;
+                }
+              }
+            } else if (g) {
+              const descIds = new Set(getAllDescendantNodeIds(id, allGroups));
+              const myPhaseIds = new Set(phases.filter((ph) => ph.nodeIds.some((nid) => descIds.has(nid))).map((ph) => ph.id));
+              for (const phase of phases) {
+                if (myPhaseIds.has(phase.id)) continue;
+                const assignedPos = phase.nodeIds.map((nid) => positions[nid]).filter((p): p is { x: number; y: number } => !!p);
+                if (assignedPos.length === 0) continue;
+                const bandMinX = Math.min(...assignedPos.map((p) => p.x)) - PHASE_PAD_X;
+                const bandMaxX = Math.max(...assignedPos.map((p) => p.x + NODE_W)) + PHASE_PAD_X;
+                if (newX + GROUP_R > bandMinX && newX - GROUP_R < bandMaxX) {
+                  snapBackUpdates[id] = startPos;
+                  break;
+                }
+              }
+            }
+          });
+          if (Object.keys(snapBackUpdates).length > 0) {
+            useGraphStore.setState((s) => ({ positions: { ...s.positions, ...snapBackUpdates } }));
           }
-        }
-
-        if (shouldSnapBack) {
-          const el = groupRef.current;
-          el?.classList.add('node-snapping');
-          useGraphStore.setState((s) => ({
-            positions: { ...s.positions, [group.id]: { x: startX, y: startY } },
-          }));
-          setTimeout(() => el?.classList.remove('node-snapping'), 300);
-        } else {
           saveLayoutToCache();
+        } else {
+          // Single-group drop: check phase boundaries
+          const newX = positions[group.id]?.x ?? startX;
+          const descendantIds = new Set(getAllDescendantNodeIds(group.id, allGroups));
+          const myPhaseIds = new Set(
+            phases
+              .filter((ph) =>
+                ph.nodeIds.some((nid) => descendantIds.has(nid)) ||
+                (ph.groupIds ?? []).includes(group.id)
+              )
+              .map((ph) => ph.id)
+          );
+          let shouldSnapBack = false;
+          for (const phase of phases) {
+            if (myPhaseIds.has(phase.id)) continue;
+            const nodePos = phase.nodeIds.map((nid) => positions[nid]).filter((p): p is { x: number; y: number } => !!p);
+            const grpPos = (phase.groupIds ?? []).map((gid) => positions[gid]).filter((p): p is { x: number; y: number } => !!p);
+            if (nodePos.length === 0 && grpPos.length === 0) continue;
+            const allXMins = [...nodePos.map((p) => p.x), ...grpPos.map((p) => p.x - GROUP_R)];
+            const allXMaxes = [...nodePos.map((p) => p.x + NODE_W), ...grpPos.map((p) => p.x + GROUP_R)];
+            const bandMinX = Math.min(...allXMins) - PHASE_PAD_X;
+            const bandMaxX = Math.max(...allXMaxes) + PHASE_PAD_X;
+            if (newX + GROUP_R > bandMinX && newX - GROUP_R < bandMaxX) {
+              shouldSnapBack = true;
+              break;
+            }
+          }
+
+          if (shouldSnapBack) {
+            const el = groupRef.current;
+            el?.classList.add('node-snapping');
+            useGraphStore.setState((s) => ({
+              positions: { ...s.positions, [group.id]: { x: startX, y: startY } },
+            }));
+            setTimeout(() => el?.classList.remove('node-snapping'), 300);
+          } else {
+            // Valid drop — if this group belongs to a phase, push non-members out
+            const myPhase = phases.find(
+              (ph) =>
+                (ph.groupIds ?? []).includes(group.id) ||
+                ph.nodeIds.some((nid) => descendantIds.has(nid))
+            );
+            if (myPhase) {
+              const nodePos = myPhase.nodeIds.map((nid) => positions[nid]).filter((p): p is { x: number; y: number } => !!p);
+              const grpPos = (myPhase.groupIds ?? []).map((gid) => positions[gid]).filter((p): p is { x: number; y: number } => !!p);
+              if (nodePos.length > 0 || grpPos.length > 0) {
+                const allXMins = [...nodePos.map((p) => p.x), ...grpPos.map((p) => p.x - GROUP_R)];
+                const allXMaxes = [...nodePos.map((p) => p.x + NODE_W), ...grpPos.map((p) => p.x + GROUP_R)];
+                const newBandMinX = Math.min(...allXMins) - PHASE_PAD_X;
+                const newBandMaxX = Math.max(...allXMaxes) + PHASE_PAD_X;
+                const GAP = 20;
+                const pushUpdates: Record<string, { x: number; y: number }> = {};
+
+                // Push non-member nodes out
+                const myPhaseNodeSet = new Set(myPhase.nodeIds);
+                const myPhaseGroupSet = new Set(myPhase.groupIds ?? []);
+                Object.entries(positions).forEach(([id, pos]) => {
+                  if (myPhaseNodeSet.has(id) || myPhaseGroupSet.has(id)) return;
+                  const isNode = !allGroups.some((g) => g.id === id);
+                  const isCollapsedGroup = allGroups.some((g) => g.id === id && g.collapsed);
+                  if (!isNode && !isCollapsedGroup) return;
+                  const left = isCollapsedGroup ? pos.x - GROUP_R : pos.x;
+                  const right = isCollapsedGroup ? pos.x + GROUP_R : pos.x + NODE_W;
+                  if (right > newBandMinX && left < newBandMaxX) {
+                    const centerX = (left + right) / 2;
+                    if (centerX < (newBandMinX + newBandMaxX) / 2) {
+                      pushUpdates[id] = { ...pos, x: isCollapsedGroup ? newBandMinX - GROUP_R - GAP : newBandMinX - NODE_W - GAP };
+                    } else {
+                      pushUpdates[id] = { ...pos, x: isCollapsedGroup ? newBandMaxX + GROUP_R + GAP : newBandMaxX + GAP };
+                    }
+                  }
+                });
+
+                if (Object.keys(pushUpdates).length > 0) {
+                  useGraphStore.setState((s) => ({ positions: { ...s.positions, ...pushUpdates } }));
+                }
+              }
+            }
+            saveLayoutToCache();
+          }
         }
       }
       groupRef.current?.classList.remove('node-dragging');
@@ -181,7 +313,9 @@ export const GroupCard = memo(function GroupCard({
     e.stopPropagation();
     if (wasDraggedRef.current) { wasDraggedRef.current = false; return; }
 
-    if (designMode && designTool === 'select' && e.shiftKey) {
+    // Shift+click: toggle multi-select.
+    // In design/select mode: for group creation. In view mode: for co-drag.
+    if (e.shiftKey && (!designMode || designTool === 'select')) {
       const state = useGraphStore.getState();
       if (state.multiSelectIds.length === 0) {
         const prev = state.selectedGroupId !== group.id ? state.selectedGroupId : null;
@@ -224,8 +358,8 @@ export const GroupCard = memo(function GroupCard({
         onMouseLeave={() => { setIsLocalHovered(false); setHoveredNode(null); }}
         style={{ cursor: 'default' }}
       >
-        {/* Selection glow — design mode only, for selected or multi-selected */}
-        {(isSelected || isMultiSel) && designMode && (
+        {/* Selection glow — multi-selected (any mode) or selected in design mode */}
+        {(isMultiSel || (isSelected && designMode)) && (
           <rect
             className="group-selected-glow"
             x={bb.x - 4} y={bb.y - 4} width={bb.w + 8} height={bb.h + 8}
@@ -311,8 +445,8 @@ export const GroupCard = memo(function GroupCard({
         fill="rgba(0,0,0,0.22)"
       />
 
-      {/* Selection glow pulse — selected or multi-selected in design mode */}
-      {(isSelected || isMultiSel) && designMode && (
+      {/* Selection glow pulse — multi-selected (any mode) or selected in design mode */}
+      {(isMultiSel || (isSelected && designMode)) && (
         <polygon
           className="group-selected-ring"
           points={computePolygonPoints(0, 0, GROUP_R + 8, sides)}

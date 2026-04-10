@@ -222,6 +222,8 @@ export interface GraphPhase {
   color: string;
   /** IDs of nodes assigned to this phase */
   nodeIds: string[];
+  /** IDs of collapsed groups assigned to this phase */
+  groupIds?: string[];
   /** 0, 1, 2… determines left-to-right band order on the canvas */
   sequence: number;
 }
