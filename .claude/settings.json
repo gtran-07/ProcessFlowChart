@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"HEADER_H\\\\|const HEADER_H\" src/components/Canvas/*.tsx)"
+    ]
+  }
+}

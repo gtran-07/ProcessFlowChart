@@ -33,6 +33,10 @@ export const LANE_LABEL_W = 130;
 export const LANE_PAD_Y = 28;
 /** Vertical gap between swim lanes */
 export const LANE_GAP = 18;
+/** Minimum horizontal gap enforced between node/group edges for legibility */
+export const LEGIBILITY_PAD_X = 24;
+/** Minimum vertical gap enforced between node/group edges for legibility */
+export const LEGIBILITY_PAD_Y = 16;
 
 // ─── INTERNAL TYPES (not exported — only used within this file) ──────────────
 
@@ -307,8 +311,9 @@ export function computeLaneLayout(
   });
 
   // Compute each lane's vertical metrics (y position and height)
+  // Start below y=0 to reserve space for phase header strips (48px = HEADER_H in PhaseLayer).
   const laneMetrics: Record<string, LaneMetrics> = {};
-  let currentY = 0;
+  let currentY = 48;
 
   ownerOrder.forEach((owner) => {
     const depthGroups = ownerDepthGroups[owner] ?? {};
@@ -550,12 +555,14 @@ export function pushNodesOutOfPhaseBand(
     otherPhaseRanges.push({ minX, maxX });
   });
 
-  // Helper: check if a candidate x-range (width = nodeW) overlaps any other phase band
-  function overlapsOtherPhase(candidateX: number, width: number = nodeW): boolean {
+  // Helper: check if a candidate x-range (width = nodeW) overlaps any other phase band.
+  // Declared as let so it can be redefined after allFinalBands is built (post-cascade),
+  // ensuring non-member placement uses accurate band positions rather than stale otherPhaseRanges.
+  let overlapsOtherPhase = (candidateX: number, width: number = nodeW): boolean => {
     return otherPhaseRanges.some(
       (r) => candidateX < r.maxX && candidateX + width > r.minX
     );
-  }
+  };
 
   const adjusted = { ...positions };
 
@@ -652,6 +659,13 @@ export function pushNodesOutOfPhaseBand(
     const maxX = Math.max(...xMaxes) + PHASE_PAD_X;
     allFinalBands.push({ minX, maxX, centerX: (minX + maxX) / 2 });
   });
+
+  // Redefine overlapsOtherPhase to use the authoritative post-cascade band positions.
+  // The earlier definition used otherPhaseRanges which can go stale during multi-step
+  // cascades, causing displaced non-members to land inside a different phase band.
+  overlapsOtherPhase = (candidateX: number, width: number = nodeW): boolean => {
+    return allFinalBands.some((b) => candidateX < b.maxX && candidateX + width > b.minX);
+  };
 
   // ── Node violators ────────────────────────────────────────────────────────
   const rightNodes: { nodeId: string; origX: number }[] = [];
@@ -849,6 +863,171 @@ export function enforceAllPhaseBoundaries(
 }
 
 /**
+ * clampXOutOfPhaseBands — deflects a candidate X position away from all phase
+ * bands the node is not a member of.
+ *
+ * Used during drag in DAG view to give live wall feedback, mirroring the live
+ * Y-clamp swim lanes apply in LANE view. Runs multiple passes so adjacent
+ * bands are handled without cascades.
+ *
+ * @param candidateX - Proposed new X for the dragged node (top-left origin)
+ * @param nodeId     - ID of the node being dragged
+ * @param phases     - All phases
+ * @param positions  - Current stored positions (read-only)
+ * @param nodeW      - NODE_W constant
+ * @param excludeIds - IDs of co-dragged items to exclude from band calculations
+ *                     (they move as a unit, so they don't define a "wall")
+ */
+export function clampXOutOfPhaseBands(
+  candidateX: number,
+  nodeId: string,
+  phases: GraphPhase[],
+  positions: Record<string, Position>,
+  nodeW: number,
+  excludeIds: Set<string> = new Set()
+): number {
+  const myPhase = phases.find((ph) => ph.nodeIds.includes(nodeId));
+
+  let x = candidateX;
+
+  // Multiple passes resolve cascading adjacent bands (same node can be deflected
+  // right into a second band; next pass catches that).
+  for (let pass = 0; pass < phases.length; pass++) {
+    let moved = false;
+
+    for (const phase of phases) {
+      if (myPhase && phase.id === myPhase.id) continue; // own phase — skip
+
+      // Band bounds from members that are not co-dragged (they define the wall)
+      const memberPositions = phase.nodeIds
+        .filter((nid) => nid !== nodeId && !excludeIds.has(nid))
+        .map((nid) => positions[nid])
+        .filter((p): p is Position => !!p);
+
+      if (memberPositions.length === 0) continue; // no anchor members → no band
+
+      const bandMinX = Math.min(...memberPositions.map((p) => p.x)) - PHASE_PAD_X;
+      const bandMaxX = Math.max(...memberPositions.map((p) => p.x + nodeW)) + PHASE_PAD_X;
+
+      if (x + nodeW > bandMinX && x < bandMaxX) {
+        // Overlap — push to whichever edge is closer
+        const distToLeft  = x + nodeW - bandMinX; // penetration from left
+        const distToRight = bandMaxX - x;          // penetration from right
+        x = distToLeft <= distToRight ? bandMinX - nodeW : bandMaxX;
+        moved = true;
+      }
+    }
+
+    if (!moved) break; // stable — no further passes needed
+  }
+
+  return x;
+}
+
+/**
+ * resolveNodeOverlaps — iteratively separates overlapping nodes and collapsed groups.
+ *
+ * Uses a force-based iterative algorithm: for each overlapping pair, push them apart
+ * along the axis with the smaller penetration depth. Runs up to MAX_ITER passes or
+ * until no overlaps remain.
+ *
+ * Nodes are treated as rectangles (NODE_W × NODE_H, top-left origin).
+ * Collapsed groups are treated as squares centered on their position (2×groupR × 2×groupR).
+ * Expanded groups are not in the positions map directly (their children are), so they
+ * are skipped here.
+ *
+ * @param positions         - Current positions map (nodeId / collapsed groupId → {x, y})
+ * @param collapsedGroupIds - Set of group IDs that are currently collapsed
+ * @param groupR            - Radius of a collapsed group polygon (GROUP_R constant)
+ * @param paddingX          - Minimum horizontal gap enforced between items
+ * @param paddingY          - Minimum vertical gap enforced between items
+ * @param anchorIds         - IDs that must not move (e.g. the just-dropped node). Others push away from them.
+ */
+export function resolveNodeOverlaps(
+  positions: Record<string, Position>,
+  collapsedGroupIds: Set<string>,
+  groupR: number = 0,
+  paddingX: number = LEGIBILITY_PAD_X,
+  paddingY: number = LEGIBILITY_PAD_Y,
+  anchorIds: Set<string> = new Set()
+): Record<string, Position> {
+  const ids = Object.keys(positions);
+  if (ids.length < 2) return positions;
+
+  const result: Record<string, Position> = {};
+  ids.forEach((id) => { result[id] = { ...positions[id] }; });
+
+  /** Return the bounding box for an element given its current position */
+  const getBBox = (id: string) => {
+    const pos = result[id];
+    if (collapsedGroupIds.has(id) && groupR > 0) {
+      return { cx: pos.x, cy: pos.y, x: pos.x - groupR, y: pos.y - groupR, w: groupR * 2, h: groupR * 2 };
+    }
+    return { cx: pos.x + NODE_W / 2, cy: pos.y + NODE_H / 2, x: pos.x, y: pos.y, w: NODE_W, h: NODE_H };
+  };
+
+  const MAX_ITER = 120;
+
+  for (let iter = 0; iter < MAX_ITER; iter++) {
+    let anyMoved = false;
+
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const idA = ids[i];
+        const idB = ids[j];
+        const bA = getBBox(idA);
+        const bB = getBBox(idB);
+
+        // Penetration depths on each axis (positive = overlapping)
+        const xOverlap = Math.min(bA.x + bA.w, bB.x + bB.w) - Math.max(bA.x, bB.x);
+        const yOverlap = Math.min(bA.y + bA.h, bB.y + bB.h) - Math.max(bA.y, bB.y);
+        if (xOverlap <= 0 || yOverlap <= 0) continue; // no overlap
+
+        // Amount to push apart (include desired padding gap)
+        const sepX = xOverlap + paddingX;
+        const sepY = yOverlap + paddingY;
+
+        const posA = result[idA];
+        const posB = result[idB];
+        const aAnchored = anchorIds.has(idA);
+        const bAnchored = anchorIds.has(idB);
+        if (aAnchored && bAnchored) continue; // both pinned — skip
+
+        if (sepX <= sepY) {
+          // Cheaper to resolve horizontally
+          // Anchored item absorbs nothing; free item takes the full separation
+          const aShare = aAnchored ? 0 : bAnchored ? sepX : sepX / 2;
+          const bShare = bAnchored ? 0 : aAnchored ? sepX : sepX / 2;
+          if (bA.cx <= bB.cx) {
+            if (!aAnchored) result[idA] = { ...posA, x: posA.x - aShare };
+            if (!bAnchored) result[idB] = { ...posB, x: posB.x + bShare };
+          } else {
+            if (!aAnchored) result[idA] = { ...posA, x: posA.x + aShare };
+            if (!bAnchored) result[idB] = { ...posB, x: posB.x - bShare };
+          }
+        } else {
+          // Cheaper to resolve vertically
+          const aShare = aAnchored ? 0 : bAnchored ? sepY : sepY / 2;
+          const bShare = bAnchored ? 0 : aAnchored ? sepY : sepY / 2;
+          if (bA.cy <= bB.cy) {
+            if (!aAnchored) result[idA] = { ...posA, y: posA.y - aShare };
+            if (!bAnchored) result[idB] = { ...posB, y: posB.y + bShare };
+          } else {
+            if (!aAnchored) result[idA] = { ...posA, y: posA.y + aShare };
+            if (!bAnchored) result[idB] = { ...posB, y: posB.y - bShare };
+          }
+        }
+        anyMoved = true;
+      }
+    }
+
+    if (!anyMoved) break;
+  }
+
+  return result;
+}
+
+/**
  * computePhaseAdjustedPositions — computes virtual x-offsets for phase collapse/expand.
  *
  * When one or more phases are collapsed, their bands shrink to COLLAPSED_W pixels wide.
@@ -866,7 +1045,8 @@ export function computePhaseAdjustedPositions(
   phases: GraphPhase[],
   rawPositions: Record<string, Position>,
   collapsedPhaseIds: string[],
-  nodeW: number
+  nodeW: number,
+  clampMinX?: number
 ): {
   adjustedPositions: Record<string, Position>;
   hiddenNodeIds: Set<string>;
@@ -900,6 +1080,7 @@ export function computePhaseAdjustedPositions(
   // shift = sum of savings from every collapsed phase whose maxX <= this entry's x.
   // Condition "pos.x >= pi.maxX" ensures only nodes strictly to the right of a collapsed
   // band are shifted — nodes inside the band itself (hidden) are not shifted.
+  // clampMinX (e.g. LANE_LABEL_W in lanes mode) prevents shifting nodes behind the lane label.
   const adjustedPositions: Record<string, Position> = {};
   Object.entries(rawPositions).forEach(([id, pos]) => {
     let shift = 0;
@@ -908,7 +1089,8 @@ export function computePhaseAdjustedPositions(
         shift += (pi.maxX - pi.minX) - COLLAPSED_W;
       }
     });
-    adjustedPositions[id] = shift === 0 ? pos : { ...pos, x: pos.x - shift };
+    const newX = pos.x - shift;
+    adjustedPositions[id] = shift === 0 ? pos : { ...pos, x: clampMinX !== undefined ? Math.max(newX, clampMinX) : newX };
   });
 
   return { adjustedPositions, hiddenNodeIds };

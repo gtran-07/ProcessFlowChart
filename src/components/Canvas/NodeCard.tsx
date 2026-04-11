@@ -12,8 +12,8 @@
 
 import React, { memo, useRef, useState } from 'react';
 import { useGraphStore } from '../../store/graphStore';
-import { NODE_W, NODE_H, LANE_LABEL_W, truncateText } from '../../utils/layout';
-import { getAllDescendantNodeIds, GROUP_R } from '../../utils/grouping';
+import { NODE_W, NODE_H, LANE_LABEL_W, truncateText, clampXOutOfPhaseBands } from '../../utils/layout';
+import { GROUP_R } from '../../utils/grouping';
 import type { GraphNode, Position } from '../../types/graph';
 
 interface NodeCardProps {
@@ -29,7 +29,7 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
     selectedNodeId, lastJumpedNodeId,
     designMode, designTool, connectSourceId,
     setSelectedNode, setHoveredNode, setConnectSource, addEdge,
-    saveLayoutToCache, multiSelectIds, toggleMultiSelect,
+    saveLayoutToCache, settleAndResolve, multiSelectIds, toggleMultiSelect,
   } = useGraphStore();
 
   const groupRef = useRef<SVGGElement>(null);
@@ -120,7 +120,13 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
                 }
               }
             }
-            updates[id] = { x: pos.x + dx, y: newY };
+            // DAG view: live X-wall per item, excluding all co-dragged items from band calc
+            let newX = pos.x + dx;
+            if (state.viewMode === 'dag' && state.phases.length > 0) {
+              const coMovedIds = new Set(Object.keys(multiStartPositions));
+              newX = clampXOutOfPhaseBands(newX, id, state.phases, state.positions, NODE_W, coMovedIds);
+            }
+            updates[id] = { x: newX, y: newY };
           });
           useGraphStore.setState((s) => ({ positions: { ...s.positions, ...updates } }));
         } else {
@@ -141,6 +147,11 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
             }
           }
 
+          // DAG view: live X-wall — deflect out of any phase band we don't belong to
+          if (state.viewMode === 'dag' && state.phases.length > 0) {
+            newX = clampXOutOfPhaseBands(newX, node.id, state.phases, state.positions, NODE_W);
+          }
+
           useGraphStore.setState((s) => ({
             positions: {
               ...s.positions,
@@ -159,8 +170,15 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
         const { phases, positions } = state;
         const PHASE_PAD_X = 30;
 
-        if (isInMultiSelect) {
-          // Per-item phase snap-back for co-dragged nodes
+        if (state.viewMode === 'dag') {
+          // DAG view: live X-wall already prevents band violations.
+          // settleAndResolve handles any cascade edge-cases and removes overlaps.
+          // Anchor the dragged item(s) so they stay where they were dropped.
+          const anchorIds = new Set(isInMultiSelect ? Object.keys(multiStartPositions) : [node.id]);
+          settleAndResolve(anchorIds);
+          saveLayoutToCache();
+        } else if (isInMultiSelect) {
+          // LANE view multi-select: snap back any item that landed in a foreign phase band
           const snapBackUpdates: Record<string, { x: number; y: number }> = {};
           Object.entries(multiStartPositions).forEach(([id, startPos]) => {
             if (!state.allNodes.find((nd) => nd.id === id)) return; // skip groups
@@ -184,9 +202,12 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
           if (Object.keys(snapBackUpdates).length > 0) {
             useGraphStore.setState((s) => ({ positions: { ...s.positions, ...snapBackUpdates } }));
           }
+          // All dragged items (including any that snapped back) are anchors
+          const anchorIds = new Set(Object.keys(multiStartPositions));
+          settleAndResolve(anchorIds);
           saveLayoutToCache();
         } else {
-          // Single-node drop: check phase boundaries
+          // LANE view single-node: snap back if landed in a foreign phase band
           const newX = positions[node.id]?.x ?? startX;
           const myPhase = phases.find((ph) => ph.nodeIds.includes(node.id));
           let shouldSnapBack = false;
@@ -213,59 +234,8 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
             }));
             setTimeout(() => el?.classList.remove('node-snapping'), 300);
           } else {
-            // Valid drop — push any non-member nodes/groups out of the expanded phase band
-            if (myPhase) {
-              const freshState = useGraphStore.getState();
-              const freshPositions = freshState.positions;
-              const freshGroups = freshState.groups;
-              const PUSH_GAP = 20;
-
-              const myPhasePositions = myPhase.nodeIds
-                .map((nid) => freshPositions[nid])
-                .filter((p): p is { x: number; y: number } => !!p);
-
-              if (myPhasePositions.length > 0) {
-                const newBandMinX = Math.min(...myPhasePositions.map((p) => p.x)) - PHASE_PAD_X;
-                const newBandMaxX = Math.max(...myPhasePositions.map((p) => p.x + NODE_W)) + PHASE_PAD_X;
-                const bandCenterX = (newBandMinX + newBandMaxX) / 2;
-                const myPhaseNodeSet = new Set(myPhase.nodeIds);
-                const pushedPositions: Record<string, { x: number; y: number }> = {};
-
-                for (const n of freshState.allNodes) {
-                  if (myPhaseNodeSet.has(n.id)) continue;
-                  const pos = freshPositions[n.id];
-                  if (!pos) continue;
-                  if (pos.x + NODE_W > newBandMinX && pos.x < newBandMaxX) {
-                    const nudgeLeft = pos.x + NODE_W / 2 < bandCenterX;
-                    pushedPositions[n.id] = {
-                      x: nudgeLeft ? newBandMinX - NODE_W - PUSH_GAP : newBandMaxX + PUSH_GAP,
-                      y: pos.y,
-                    };
-                  }
-                }
-
-                for (const g of freshGroups) {
-                  if (!g.collapsed) continue;
-                  const pos = freshPositions[g.id];
-                  if (!pos) continue;
-                  const descendantIds = new Set(getAllDescendantNodeIds(g.id, freshGroups));
-                  if (myPhase.nodeIds.some((nid) => descendantIds.has(nid))) continue;
-                  if (pos.x + GROUP_R > newBandMinX && pos.x - GROUP_R < newBandMaxX) {
-                    const nudgeLeft = pos.x < bandCenterX;
-                    pushedPositions[g.id] = {
-                      x: nudgeLeft ? newBandMinX - GROUP_R - PUSH_GAP : newBandMaxX + GROUP_R + PUSH_GAP,
-                      y: pos.y,
-                    };
-                  }
-                }
-
-                if (Object.keys(pushedPositions).length > 0) {
-                  useGraphStore.setState((s) => ({
-                    positions: { ...s.positions, ...pushedPositions },
-                  }));
-                }
-              }
-            }
+            // Valid drop — anchor this node, resolve all other overlaps around it
+            settleAndResolve(new Set([node.id]));
             saveLayoutToCache();
           }
         }

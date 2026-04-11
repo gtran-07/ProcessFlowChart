@@ -38,9 +38,12 @@ import {
   enforcePhaseZones,
   pushNodesOutOfPhaseBand,
   enforceAllPhaseBoundaries,
+  resolveNodeOverlaps,
   NODE_W,
   NODE_H,
   LANE_LABEL_W,
+  LEGIBILITY_PAD_X,
+  LEGIBILITY_PAD_Y,
 } from '../utils/layout';
 import { assignOwnerColors } from '../utils/colors';
 import {
@@ -220,6 +223,10 @@ export interface GraphStore {
   expandPhase: (id: string) => void;
   /** Toggle the collapsed/expanded state of a phase band */
   togglePhaseCollapse: (id: string) => void;
+  /** Collapse all phase bands at once */
+  collapseAllPhases: () => void;
+  /** Expand all phase bands at once */
+  expandAllPhases: () => void;
   /** Update one or more fields of an existing phase */
   updatePhase: (id: string, changes: Partial<Omit<GraphPhase, 'id'>>) => void;
   /** Delete a phase (nodes are unaffected — they simply no longer belong to a phase) */
@@ -232,10 +239,25 @@ export interface GraphStore {
   assignGroupsToPhase: (groupIds: string[], phaseId: string) => void;
   /** Remove a set of groups from whichever phase they belong to */
   removeGroupsFromPhase: (groupIds: string[]) => void;
-  /** Push all non-member nodes and collapsed groups out of the given phase band, respecting other phase bands */
-  pushNonMembersOutOfPhase: (phaseId: string) => void;
+  /** Run full phase-constraint settlement for all phases in the current view mode and write back positions */
+  settleAllPhases: () => void;
   /** Re-assign phase sequence numbers by ascending mean-X of member nodes */
   reorderPhasesByPosition: () => void;
+  /** Detect overlapping nodes / collapsed groups and spread them apart to remove overlaps */
+  resolveOverlaps: () => void;
+  /**
+   * settleAndResolve — combined phase-settlement + overlap-resolution pipeline.
+   *
+   * Runs settleAllPhases logic to enforce phase band boundaries, then calls
+   * resolveNodeOverlaps to push any remaining overlapping items apart with
+   * LEGIBILITY_PAD_X/Y spacing. In LANES view, Y positions are clamped back to
+   * the owner's lane bounds after resolution. Does NOT call saveLayoutToCache —
+   * callers are responsible for saving to cache after this returns.
+   *
+   * @param anchorIds - IDs of items that must not move (e.g. the just-dragged node).
+   *                    All other items push away from anchors.
+   */
+  settleAndResolve: (anchorIds?: Set<string>) => void;
   /** Set the selected phase ID (Inspector) */
   setSelectedPhaseId: (id: string | null) => void;
   /** Set the focused phase ID (Navigator spotlight) */
@@ -551,6 +573,9 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       undoStack,
       redoStack: [],
     });
+    // Resolve overlaps so the new node never lands on top of an existing one.
+    // The new node itself is the anchor — surrounding nodes push away from it.
+    get().settleAndResolve(new Set([newNode.id]));
   },
 
   // ── updateNode ────────────────────────────────────────────────────────────
@@ -776,10 +801,14 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     } else {
       // No cache (or in focus mode) — compute fresh positions for the current visible set
       const { positions: rawPositions, laneMetrics } = derivePositions(
-        state.visibleNodes, state.visibleEdges, mode, state.activeOwners, state.allNodes
+        state.visibleNodes, state.visibleEdges, mode, state.activeOwners, state.allNodes,
+        state.phases.length > 0 ? state.phases : undefined
       );
-      const positions = mode === 'lanes' && state.phases.length > 0
-        ? enforceAllPhaseBoundaries(rawPositions, state.phases, state.groups, GROUP_R, LANE_LABEL_W)
+      const positions = state.phases.length > 0
+        ? enforceAllPhaseBoundaries(
+            rawPositions, state.phases, state.groups, GROUP_R,
+            mode === 'lanes' ? LANE_LABEL_W : 0
+          )
         : rawPositions;
       set({ viewMode: mode, layoutCache: cache, positions, laneMetrics });
       setTimeout(() => get().fitToScreen(), 60);
@@ -792,6 +821,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     selectedGroupId: null,
     selectedPhaseId: id !== null ? null : s.selectedPhaseId,
     lastJumpedNodeId: s.lastJumpedNodeId && s.lastJumpedNodeId !== id ? null : s.lastJumpedNodeId,
+    multiSelectIds: [],
   })),
 
   // ── setHoveredNode ────────────────────────────────────────────────────────
@@ -975,8 +1005,11 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       visibleNodes, visibleEdges, state.viewMode, state.activeOwners, state.allNodes, state.phases
     );
 
-    const positions = state.viewMode === 'lanes' && state.phases.length > 0
-      ? enforceAllPhaseBoundaries(rawPositions, state.phases, state.groups, GROUP_R, LANE_LABEL_W)
+    const positions = state.phases.length > 0
+      ? enforceAllPhaseBoundaries(
+          rawPositions, state.phases, state.groups, GROUP_R,
+          state.viewMode === 'lanes' ? LANE_LABEL_W : 0
+        )
       : rawPositions;
 
     set({ visibleNodes, visibleEdges, positions, laneMetrics });
@@ -1345,10 +1378,15 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     );
 
     set({ groups, positions, visibleNodes, visibleEdges, designDirty: true });
+
+    // Both collapse and expand may create overlaps: collapse places a polygon at the
+    // children's centroid (which may land on a neighbour), expand reveals children
+    // that may need to spread out. Run overlap resolution in both cases.
+    get().resolveOverlaps();
   },
 
   // ── setSelectedGroup ──────────────────────────────────────────────────────
-  setSelectedGroup: (id) => set({ selectedGroupId: id, selectedNodeId: null, selectedPhaseId: null }),
+  setSelectedGroup: (id) => set({ selectedGroupId: id, selectedNodeId: null, selectedPhaseId: null, multiSelectIds: [] }),
 
   // ── toggleMultiSelect ─────────────────────────────────────────────────────
   toggleMultiSelect: (id) => {
@@ -1365,6 +1403,16 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   // ── createPhase ───────────────────────────────────────────────────────────
   createPhase: (nodeIds, data, groupIds = []) => {
     const state = get();
+
+    // Expand groups to include all nested descendant groups and their nodes
+    const allGroupIds = [...new Set([
+      ...groupIds,
+      ...groupIds.flatMap((gid) => getAllDescendantGroupIds(gid, state.groups)),
+    ])];
+    const allGroupNodeIds = [...new Set(
+      groupIds.flatMap((gid) => getAllDescendantNodeIds(gid, state.groups)),
+    )];
+    const allNodeIds = [...new Set([...nodeIds, ...allGroupNodeIds])];
 
     const undoSnapshot: UndoSnapshot = {
       nodes: [...state.allNodes],
@@ -1384,16 +1432,16 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       name: data.name,
       description: data.description,
       color: data.color ?? PHASE_PALETTE[colorIdx],
-      nodeIds,
-      groupIds,
+      nodeIds: allNodeIds,
+      groupIds: allGroupIds,
       sequence: nextSeq,
     };
 
     // Remove these nodes/groups from any existing phase
     const phases = state.phases.map((p) => ({
       ...p,
-      nodeIds: p.nodeIds.filter((nid) => !nodeIds.includes(nid)),
-      groupIds: (p.groupIds ?? []).filter((gid) => !groupIds.includes(gid)),
+      nodeIds: p.nodeIds.filter((nid) => !allNodeIds.includes(nid)),
+      groupIds: (p.groupIds ?? []).filter((gid) => !allGroupIds.includes(gid)),
     }));
 
     const allPhasesAfterCreate = [...phases, newPhase];
@@ -1403,18 +1451,20 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       newPhase.id,
       NODE_W
     );
+    const collapsedGroupIds1 = new Set(state.groups.filter((g) => g.collapsed).map((g) => g.id));
+    const resolvedPositions = resolveNodeOverlaps(adjustedPositions, collapsedGroupIds1, GROUP_R);
 
     const otherMode: ViewMode = state.viewMode === 'dag' ? 'lanes' : 'dag';
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { [otherMode]: _dropped, ...cacheWithoutOther } = state.layoutCache;
     const updatedCache: Record<string, LayoutSnapshot> = {
       ...cacheWithoutOther,
-      [state.viewMode]: { positions: adjustedPositions, transform: state.transform },
+      [state.viewMode]: { positions: resolvedPositions, transform: state.transform },
     };
 
     set({
       phases: allPhasesAfterCreate,
-      positions: adjustedPositions,
+      positions: resolvedPositions,
       layoutCache: updatedCache,
       designDirty: true,
       undoStack: [...state.undoStack, undoSnapshot].slice(-50),
@@ -1467,16 +1517,18 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
 
     // Push non-members out of the (potentially expanded) phase band
     const adjustedPositions = pushNodesOutOfPhaseBand(state.positions, phases, phaseId, NODE_W);
+    const collapsedGroupIds2 = new Set(state.groups.filter((g) => g.collapsed).map((g) => g.id));
+    const resolvedPositions2 = resolveNodeOverlaps(adjustedPositions, collapsedGroupIds2, GROUP_R);
 
     const otherMode: ViewMode = state.viewMode === 'dag' ? 'lanes' : 'dag';
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { [otherMode]: _dropped, ...cacheWithoutOther } = state.layoutCache;
     const updatedCache: Record<string, LayoutSnapshot> = {
       ...cacheWithoutOther,
-      [state.viewMode]: { positions: adjustedPositions, transform: state.transform },
+      [state.viewMode]: { positions: resolvedPositions2, transform: state.transform },
     };
 
-    set({ phases, positions: adjustedPositions, layoutCache: updatedCache, designDirty: true });
+    set({ phases, positions: resolvedPositions2, layoutCache: updatedCache, designDirty: true });
   },
 
   // ── removeNodesFromPhase ──────────────────────────────────────────────────
@@ -1492,28 +1544,45 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   // ── assignGroupsToPhase ───────────────────────────────────────────────────
   assignGroupsToPhase: (groupIds, phaseId) => {
     const state = get();
+
+    // Expand each group to include all nested descendant groups and their nodes
+    const allGroupIds = [...new Set([
+      ...groupIds,
+      ...groupIds.flatMap((gid) => getAllDescendantGroupIds(gid, state.groups)),
+    ])];
+    const allNodeIds = [...new Set(
+      groupIds.flatMap((gid) => getAllDescendantNodeIds(gid, state.groups)),
+    )];
+
     const phases = state.phases.map((p) => {
       if (p.id === phaseId) {
-        const merged = [...new Set([...(p.groupIds ?? []), ...groupIds])];
-        return { ...p, groupIds: merged };
+        const mergedGroups = [...new Set([...(p.groupIds ?? []), ...allGroupIds])];
+        const mergedNodes = [...new Set([...p.nodeIds, ...allNodeIds])];
+        return { ...p, groupIds: mergedGroups, nodeIds: mergedNodes };
       }
-      return { ...p, groupIds: (p.groupIds ?? []).filter((gid) => !groupIds.includes(gid)) };
+      return {
+        ...p,
+        groupIds: (p.groupIds ?? []).filter((gid) => !allGroupIds.includes(gid)),
+        nodeIds: p.nodeIds.filter((nid) => !allNodeIds.includes(nid)),
+      };
     });
 
     const adjustedPositions = pushNodesOutOfPhaseBand(
       state.positions, phases, phaseId, NODE_W, state.groups, GROUP_R,
       state.viewMode === 'lanes' ? LANE_LABEL_W : undefined
     );
+    const collapsedGroupIds3 = new Set(state.groups.filter((g) => g.collapsed).map((g) => g.id));
+    const resolvedPositions3 = resolveNodeOverlaps(adjustedPositions, collapsedGroupIds3, GROUP_R);
 
     const otherMode: ViewMode = state.viewMode === 'dag' ? 'lanes' : 'dag';
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { [otherMode]: _dropped, ...cacheWithoutOther } = state.layoutCache;
     const updatedCache: Record<string, LayoutSnapshot> = {
       ...cacheWithoutOther,
-      [state.viewMode]: { positions: adjustedPositions, transform: state.transform },
+      [state.viewMode]: { positions: resolvedPositions3, transform: state.transform },
     };
 
-    set({ phases, positions: adjustedPositions, layoutCache: updatedCache, designDirty: true });
+    set({ phases, positions: resolvedPositions3, layoutCache: updatedCache, designDirty: true });
   },
 
   // ── removeGroupsFromPhase ─────────────────────────────────────────────────
@@ -1526,20 +1595,22 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     set({ phases, designDirty: true });
   },
 
-  // ── pushNonMembersOutOfPhase ──────────────────────────────────────────────
-  pushNonMembersOutOfPhase: (phaseId) => {
+  // ── settleAllPhases ───────────────────────────────────────────────────────
+  settleAllPhases: () => {
     const state = get();
-    const adjustedPositions = pushNodesOutOfPhaseBand(
-      state.positions,
-      state.phases,
-      phaseId,
-      NODE_W,
-      state.groups,
-      GROUP_R,
-      state.viewMode === 'lanes' ? LANE_LABEL_W : undefined
-    );
-    get().saveLayoutToCache();
-    set({ positions: adjustedPositions, designDirty: true });
+    if (state.phases.length === 0) return;
+    let settled: Record<string, { x: number; y: number }>;
+    if (state.viewMode === 'lanes') {
+      settled = enforceAllPhaseBoundaries(state.positions, state.phases, state.groups, GROUP_R, LANE_LABEL_W);
+    } else {
+      // DAG mode: chain pushNodesOutOfPhaseBand for each phase sorted by sequence
+      const sorted = [...state.phases].sort((a, b) => a.sequence - b.sequence);
+      settled = state.positions;
+      for (const phase of sorted) {
+        settled = pushNodesOutOfPhaseBand(settled, state.phases, phase.id, NODE_W, state.groups, GROUP_R, undefined);
+      }
+    }
+    set({ positions: settled, designDirty: true });
   },
 
   // ── reorderPhasesByPosition ───────────────────────────────────────────────
@@ -1556,6 +1627,66 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       sequence: withMeanX.findIndex((w) => w.id === ph.id),
     }));
     set({ phases: updated, designDirty: true });
+  },
+
+  // ── resolveOverlaps ───────────────────────────────────────────────────────
+  resolveOverlaps: () => {
+    const state = get();
+    if (Object.keys(state.positions).length < 2) return;
+    const collapsedGroupIds = new Set(state.groups.filter((g) => g.collapsed).map((g) => g.id));
+    const resolved = resolveNodeOverlaps(state.positions, collapsedGroupIds, GROUP_R);
+    set({ positions: resolved, designDirty: true });
+  },
+
+  // ── settleAndResolve ──────────────────────────────────────────────────────
+  settleAndResolve: (anchorIds?: Set<string>) => {
+    const state = get();
+    if (Object.keys(state.positions).length < 2) return;
+
+    // Step 1 — phase band enforcement (same logic as settleAllPhases)
+    let positions = state.positions;
+    if (state.phases.length > 0) {
+      if (state.viewMode === 'lanes') {
+        positions = enforceAllPhaseBoundaries(positions, state.phases, state.groups, GROUP_R, LANE_LABEL_W);
+      } else {
+        const sorted = [...state.phases].sort((a, b) => a.sequence - b.sequence);
+        for (const phase of sorted) {
+          positions = pushNodesOutOfPhaseBand(positions, state.phases, phase.id, NODE_W, state.groups, GROUP_R, undefined);
+        }
+      }
+    }
+
+    // Step 2 — overlap resolution with legibility padding
+    const collapsedGroupIds = new Set(state.groups.filter((g) => g.collapsed).map((g) => g.id));
+    positions = resolveNodeOverlaps(
+      positions, collapsedGroupIds, GROUP_R,
+      LEGIBILITY_PAD_X, LEGIBILITY_PAD_Y,
+      anchorIds ?? new Set()
+    );
+
+    // Step 3 — clamp Y back to lane bounds in LANES view
+    // (overlap resolution may have pushed nodes outside their owner lane)
+    if (state.viewMode === 'lanes') {
+      const clamped: Record<string, Position> = {};
+      Object.entries(positions).forEach(([id, pos]) => {
+        const node = state.allNodes.find((n) => n.id === id);
+        if (node) {
+          const lane = state.laneMetrics[node.owner];
+          if (lane) {
+            const margin = 6;
+            clamped[id] = {
+              ...pos,
+              y: Math.max(lane.y + margin, Math.min(lane.y + lane.height - NODE_H - margin, pos.y)),
+            };
+            return;
+          }
+        }
+        clamped[id] = pos;
+      });
+      positions = clamped;
+    }
+
+    set({ positions, designDirty: true });
   },
 
   // ── setSelectedPhaseId ────────────────────────────────────────────────────
@@ -1585,4 +1716,12 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
         : [...state.collapsedPhaseIds, id],
     });
   },
+
+  // ── collapseAllPhases ─────────────────────────────────────────────────────
+  collapseAllPhases: () => set((s) => ({
+    collapsedPhaseIds: s.phases.map((p) => p.id),
+  })),
+
+  // ── expandAllPhases ───────────────────────────────────────────────────────
+  expandAllPhases: () => set({ collapsedPhaseIds: [] }),
 }));

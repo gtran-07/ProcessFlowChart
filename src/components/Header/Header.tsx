@@ -23,7 +23,7 @@ export function Header() {
   const {
     allNodes, allEdges, visibleNodes, viewMode, designMode, designDirty,
     setViewMode, setDesignMode, loadData, rebuildGraph, clearGraph,
-    saveNamedLayout, loadNamedLayout, fitToScreen,
+    saveNamedLayout, loadNamedLayout, fitToScreen, resolveOverlaps,
     setSelectedNode, setLastJumpedNode, positions, setTransform, transform,
     activeOwners, toggleOwner, layoutCache, currentFileName, ownerColors,
     fileHandle, setFileHandle, setCurrentFileName, groups, phases,
@@ -626,6 +626,22 @@ export function Header() {
           title="How to use FlowGraph (Shift+?)"
           onClick={() => setGuidePulse((n) => n + 1)}
         >📖</button>
+
+        {/* Auto-space — resolve overlapping nodes/groups */}
+        {hasData && (
+          <button
+            className={styles.btnIcon}
+            title="Auto-space — detect and spread apart any overlapping nodes or groups"
+            onClick={() => resolveOverlaps()}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <rect x="0.75" y="0.75" width="4" height="4" rx="0.8"/>
+              <rect x="9.25" y="0.75" width="4" height="4" rx="0.8"/>
+              <rect x="0.75" y="9.25" width="4" height="4" rx="0.8"/>
+              <rect x="9.25" y="9.25" width="4" height="4" rx="0.8"/>
+            </svg>
+          </button>
+        )}
 
         {/* ↺ — Reset layout (recompute positions from scratch) */}
         <button

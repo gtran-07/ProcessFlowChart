@@ -20,6 +20,8 @@ interface PhaseNavigatorProps {
   onFocusPhase: (id: string | null) => void;
   onCreatePhase: () => void;
   onToggleCollapse: (id: string) => void;
+  onCollapseAll: () => void;
+  onExpandAll: () => void;
 }
 
 export function PhaseNavigator({
@@ -31,6 +33,8 @@ export function PhaseNavigator({
   onFocusPhase,
   onCreatePhase,
   onToggleCollapse,
+  onCollapseAll,
+  onExpandAll,
 }: PhaseNavigatorProps) {
   if (phases.length === 0 && !designMode) return null;
   if (phases.length === 0 && designMode) {
@@ -50,6 +54,8 @@ export function PhaseNavigator({
 
   const sorted = [...phases].sort((a, b) => a.sequence - b.sequence);
   const collapsedSet = new Set(collapsedPhaseIds);
+  const allCollapsed = phases.length > 0 && collapsedPhaseIds.length === phases.length;
+  const anyCollapsed = collapsedPhaseIds.length > 0;
 
   return (
     <div className={styles.navigator}>
@@ -61,6 +67,18 @@ export function PhaseNavigator({
       >
         All
       </button>
+
+      {/* Collapse All / Expand All toggle */}
+      {phases.length > 0 && (
+        <button
+          className={styles.pill}
+          onClick={allCollapsed ? onExpandAll : anyCollapsed ? onExpandAll : onCollapseAll}
+          title={anyCollapsed ? 'Expand all phases' : 'Collapse all phases'}
+          style={{ opacity: 0.7, fontSize: 10 }}
+        >
+          {anyCollapsed ? '⟩⟩' : '⟨⟨'}
+        </button>
+      )}
 
       {/* One pill per phase */}
       {sorted.map((phase) => {

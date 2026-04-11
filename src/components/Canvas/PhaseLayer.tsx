@@ -34,6 +34,10 @@ interface PhaseLayerProps {
   onPhaseClick: (id: string) => void;
   onPhaseDoubleClick: (id: string) => void;
   onToggleCollapse: (id: string) => void;
+  /** 'background': renders only band fills + borders (no header chrome).
+   *  'headers': renders only header strips + badges + text + buttons.
+   *  undefined (default): renders everything (legacy / single-pass use). */
+  renderPart?: 'background' | 'headers';
 }
 
 interface BandData {
@@ -41,8 +45,7 @@ interface BandData {
   idx: number;
   minX: number;
   maxX: number;
-  dagMinY?: number; // DAG mode: top of bounding envelope
-  dagMaxY?: number; // DAG mode: bottom of last node row (before NODE_H + pad)
+  minY: number; // minimum node/group y across all members — used to compute globalBandTop
 }
 
 export function PhaseLayer({
@@ -60,8 +63,9 @@ export function PhaseLayer({
   onPhaseClick,
   onPhaseDoubleClick,
   onToggleCollapse,
+  renderPart,
 }: PhaseLayerProps) {
-  const { saveLayoutToCache, pushNonMembersOutOfPhase, reorderPhasesByPosition } = useGraphStore();
+  const { saveLayoutToCache, settleAllPhases, reorderPhasesByPosition } = useGraphStore();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
 
@@ -110,21 +114,21 @@ export function PhaseLayer({
 
       const updates: Record<string, { x: number; y: number }> = {};
       Object.entries(dragRef.current.startPositions).forEach(([nid, pos]) => {
-        updates[nid] = { x: pos.x + dx, y: pos.y + dy };
+        updates[nid] = { x: pos.x + dx, y: pos.y };
       });
       useGraphStore.setState((s) => ({ positions: { ...s.positions, ...updates } }));
       const now = Date.now();
       if (now - lastPushTime > 50) {
         lastPushTime = now;
-        pushNonMembersOutOfPhase(phase.id);
+        settleAllPhases();
       }
     }
 
     function onUp() {
       if (dragRef.current) {
         // Member node positions are already live in the store (written during onMove).
-        // Push all non-members out using the unified, phase-band-aware algorithm.
-        pushNonMembersOutOfPhase(phase.id);
+        // Settle all phase boundaries using the unified algorithm.
+        settleAllPhases();
         reorderPhasesByPosition();
         saveLayoutToCache();
         dragRef.current = null;
@@ -171,21 +175,20 @@ export function PhaseLayer({
     const maxX = Math.max(...allXMaxes) + PHASE_PAD_X;
 
     const allPositions = [...assignedNodePositions, ...assignedGroupPositions];
-    let dagMinY: number | undefined;
-    let dagMaxY: number | undefined;
-    if (viewMode === 'dag') {
-      dagMinY = Math.min(...allPositions.map((p) => p.y)) - PHASE_PAD_Y;
-      dagMaxY = Math.max(...allPositions.map((p) => p.y));
-    }
+    const minY = Math.min(...allPositions.map((p) => p.y));
 
-    bands.push({ phase, idx, minX, maxX, dagMinY, dagMaxY });
+    bands.push({ phase, idx, minX, maxX, minY });
   });
 
   if (bands.length === 0) return null;
 
+  // All phase headers share one aligned top: the topmost member across ALL phases,
+  // minus room for the header strip. Applies to both DAG and Lane views.
+  const globalBandTop = Math.min(...bands.map((b) => b.minY)) - HEADER_H - PHASE_PAD_Y;
+
   return (
     <>
-      {bands.map(({ phase, idx, minX, maxX, dagMinY, dagMaxY }) => {
+      {bands.map(({ phase, idx, minX, maxX, minY }) => {
         const isCollapsed = collapsedSet.has(phase.id);
         const isHovered = hoveredId === phase.id;
         const isFocused = focusedPhaseId === phase.id;
@@ -196,16 +199,21 @@ export function PhaseLayer({
         const headerOpacity = isGhosted ? 0.01 : isFocused ? 0.30 : isHovered ? 0.22 : 0.16;
         const strokeOpacity = isGhosted ? 0.02 : isSelected ? 0.6 : 0.2;
 
-        // DAG mode: bands are tight envelopes around nodes; LANE mode: full-height columns
-        const isDag = viewMode === 'dag' && dagMinY !== undefined && dagMaxY !== undefined;
-        const bandTop = isDag ? dagMinY! : 0;
-        const actualBandH = isDag ? dagMaxY! + NODE_H + PHASE_PAD_Y - bandTop : bandH;
+        // Both modes: full-height columns extending to the bottom of the canvas.
+        // DAG mode: all headers share globalBandTop so they align at the same Y.
+        // LANE mode: bandTop is per-band relative to the topmost member (unchanged).
+        const bandTop = globalBandTop;
+        const actualBandH = bandH - bandTop;
 
         if (isCollapsed) {
           // ── Collapsed strip variant ────────────────────────────────────────
           const stripCenterX = minX + COLLAPSED_W / 2;
           const labelY = bandTop + actualBandH / 2;
           const expandBtnY = bandTop + 20;
+
+          const showFill    = renderPart !== 'headers';
+          const showChrome  = renderPart !== 'background';
+
           return (
             <g
               key={phase.id}
@@ -214,58 +222,79 @@ export function PhaseLayer({
               onDoubleClick={() => onToggleCollapse(phase.id)}
               onMouseEnter={() => setHoveredId(phase.id)}
               onMouseLeave={() => setHoveredId(null)}
+              onClick={() => onPhaseClick(phase.id)}
             >
-              {/* Strip fill */}
-              <rect
-                x={minX}
-                y={bandTop}
-                width={COLLAPSED_W}
-                height={actualBandH}
-                rx={isDag ? 6 : 0}
-                fill={phase.color}
-                fillOpacity={isGhosted ? 0.01 : isHovered ? 0.12 : 0.06}
-                onClick={() => onPhaseClick(phase.id)}
-              />
-              {/* Right border */}
-              <line
-                x1={minX + COLLAPSED_W}
-                y1={bandTop}
-                x2={minX + COLLAPSED_W}
-                y2={bandTop + actualBandH}
-                stroke={phase.color}
-                strokeOpacity={strokeOpacity}
-                strokeWidth={1.5}
-                strokeDasharray="6 4"
-              />
-              {/* Rotated phase name */}
-              <text
-                x={stripCenterX}
-                y={labelY}
-                textAnchor="middle"
-                dominantBaseline="middle"
-                fontSize={11}
-                fontWeight={600}
-                fill={phase.color}
-                fillOpacity={isGhosted ? 0.1 : 0.85}
-                transform={`rotate(-90, ${stripCenterX}, ${labelY})`}
-                style={{ pointerEvents: 'none', userSelect: 'none' }}
-              >
-                {phase.name}
-              </text>
-              {/* Expand button (▶) */}
-              <text
-                x={stripCenterX}
-                y={expandBtnY}
-                textAnchor="middle"
-                dominantBaseline="middle"
-                fontSize={10}
-                fill={phase.color}
-                fillOpacity={isGhosted ? 0.1 : 0.8}
-                style={{ cursor: 'pointer', userSelect: 'none' }}
-                onClick={(e) => { e.stopPropagation(); onToggleCollapse(phase.id); }}
-              >
-                ▶
-              </text>
+              {showFill && (
+                <>
+                  {/* Strip fill */}
+                  <rect
+                    x={minX}
+                    y={bandTop}
+                    width={COLLAPSED_W}
+                    height={actualBandH}
+                    rx={0}
+                    fill={phase.color}
+                    fillOpacity={isGhosted ? 0.01 : isHovered ? 0.12 : 0.06}
+                  />
+                  {/* Right border */}
+                  <line
+                    x1={minX + COLLAPSED_W}
+                    y1={bandTop}
+                    x2={minX + COLLAPSED_W}
+                    y2={bandTop + actualBandH}
+                    stroke={phase.color}
+                    strokeOpacity={strokeOpacity}
+                    strokeWidth={1.5}
+                    strokeDasharray="6 4"
+                  />
+                </>
+              )}
+              {showChrome && (
+                <>
+                  {/* Rotated phase name */}
+                  <text
+                    x={stripCenterX}
+                    y={labelY}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize={11}
+                    fontWeight={600}
+                    fill={phase.color}
+                    fillOpacity={isGhosted ? 0.1 : 0.85}
+                    transform={`rotate(-90, ${stripCenterX}, ${labelY})`}
+                    style={{ pointerEvents: 'none', userSelect: 'none' }}
+                  >
+                    {phase.name}
+                  </text>
+                  {/* Expand button (▶) */}
+                  <text
+                    x={stripCenterX}
+                    y={expandBtnY}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize={10}
+                    fill={phase.color}
+                    fillOpacity={isGhosted ? 0.1 : 0.8}
+                    style={{ cursor: 'pointer', userSelect: 'none' }}
+                    onClick={(e) => { e.stopPropagation(); onToggleCollapse(phase.id); }}
+                  >
+                    ▶
+                  </text>
+                  {/* Node count badge */}
+                  <text
+                    x={stripCenterX}
+                    y={expandBtnY + 18}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize={9}
+                    fill={phase.color}
+                    fillOpacity={isGhosted ? 0.05 : 0.6}
+                    style={{ pointerEvents: 'none', userSelect: 'none' }}
+                  >
+                    {phase.nodeIds.length}
+                  </text>
+                </>
+              )}
             </g>
           );
         }
@@ -278,6 +307,9 @@ export function PhaseLayer({
         const isDraggable = designMode;
         const dragCursor = draggingId === phase.id ? 'grabbing' : isDraggable ? 'grab' : 'pointer';
 
+        const showFill   = renderPart !== 'headers';
+        const showChrome = renderPart !== 'background';
+
         return (
           <g
             key={phase.id}
@@ -288,74 +320,65 @@ export function PhaseLayer({
             onMouseEnter={() => setHoveredId(phase.id)}
             onMouseLeave={() => setHoveredId(null)}
           >
-            {/* Main band fill */}
-            <rect
-              x={minX} y={bandTop} width={bandW} height={actualBandH}
-              rx={isDag ? 8 : 0}
-              fill={phase.color} fillOpacity={fillOpacity}
-            />
+            {showFill && (
+              <>
+                {/* Main band fill — full-height column, no rounded corners (same in both modes) */}
+                <rect
+                  x={minX} y={bandTop} width={bandW} height={actualBandH}
+                  fill={phase.color} fillOpacity={fillOpacity}
+                />
 
-            {/* Header strip — drag handle in design mode only */}
-            <rect
-              x={minX} y={bandTop} width={bandW} height={HEADER_H}
-              rx={isDag ? 8 : 0}
-              fill={phase.color} fillOpacity={headerOpacity}
-              style={{ cursor: dragCursor }}
-              onMouseDown={isDraggable ? (e) => handleHeaderMouseDown(e, phase) : undefined}
-            />
-            {/* Square off the bottom corners of the header so it blends into the band */}
-            {isDag && (
-              <rect
-                x={minX} y={bandTop + HEADER_H / 2} width={bandW} height={HEADER_H / 2}
-                fill={phase.color} fillOpacity={headerOpacity}
-              />
+                {/* Right-side dashed border delineates where this phase ends */}
+                <line
+                  x1={maxX} y1={bandTop} x2={maxX} y2={bandTop + actualBandH}
+                  stroke={phase.color} strokeOpacity={strokeOpacity} strokeWidth={1.5} strokeDasharray="6 4"
+                />
+              </>
             )}
 
-            {/* Border: right-side dashed line in LANE; full rounded outline in DAG */}
-            {isDag ? (
-              <rect
-                x={minX} y={bandTop} width={bandW} height={actualBandH}
-                rx={8} fill="none"
-                stroke={phase.color} strokeOpacity={strokeOpacity} strokeWidth={1.5} strokeDasharray="6 4"
-              />
-            ) : (
-              <line
-                x1={maxX} y1={0} x2={maxX} y2={bandH}
-                stroke={phase.color} strokeOpacity={strokeOpacity} strokeWidth={1.5} strokeDasharray="6 4"
-              />
+            {showChrome && (
+              <>
+                {/* Header strip — drag handle in design mode only */}
+                <rect
+                  x={minX} y={bandTop} width={bandW} height={HEADER_H}
+                  fill={phase.color} fillOpacity={headerOpacity}
+                  style={{ cursor: dragCursor }}
+                  onMouseDown={isDraggable ? (e) => handleHeaderMouseDown(e, phase) : undefined}
+                />
+
+                {/* Number badge */}
+                <circle cx={badgeX} cy={badgeY} r={BADGE_R} fill={phase.color} fillOpacity={isGhosted ? 0.05 : 0.85} />
+                <text
+                  x={badgeX} y={badgeY + 1}
+                  textAnchor="middle" dominantBaseline="middle"
+                  fontSize={10} fontWeight={700} fill="#fff"
+                  style={{ pointerEvents: 'none', userSelect: 'none' }}
+                >
+                  {idx + 1}
+                </text>
+
+                {/* Phase name */}
+                <text
+                  x={badgeX + BADGE_R + 6} y={badgeY + 1}
+                  dominantBaseline="middle" fontSize={13} fontWeight={600}
+                  fill={phase.color} fillOpacity={isGhosted ? 0.1 : 0.9}
+                  style={{ pointerEvents: 'none', userSelect: 'none' }}
+                >
+                  {phase.name}
+                </text>
+
+                {/* Collapse button (◀) */}
+                <text
+                  x={maxX - 14} y={badgeY + 1}
+                  textAnchor="middle" dominantBaseline="middle"
+                  fontSize={12} fill={phase.color} fillOpacity={isGhosted ? 0.1 : 0.7}
+                  style={{ cursor: 'pointer', userSelect: 'none' }}
+                  onClick={(e) => { e.stopPropagation(); onToggleCollapse(phase.id); }}
+                >
+                  ◀
+                </text>
+              </>
             )}
-
-            {/* Number badge */}
-            <circle cx={badgeX} cy={badgeY} r={BADGE_R} fill={phase.color} fillOpacity={isGhosted ? 0.05 : 0.85} />
-            <text
-              x={badgeX} y={badgeY + 1}
-              textAnchor="middle" dominantBaseline="middle"
-              fontSize={10} fontWeight={700} fill="#fff"
-              style={{ pointerEvents: 'none', userSelect: 'none' }}
-            >
-              {idx + 1}
-            </text>
-
-            {/* Phase name */}
-            <text
-              x={badgeX + BADGE_R + 6} y={badgeY + 1}
-              dominantBaseline="middle" fontSize={13} fontWeight={600}
-              fill={phase.color} fillOpacity={isGhosted ? 0.1 : 0.9}
-              style={{ pointerEvents: 'none', userSelect: 'none' }}
-            >
-              {phase.name}
-            </text>
-
-            {/* Collapse button (◀) */}
-            <text
-              x={maxX - 14} y={badgeY + 1}
-              textAnchor="middle" dominantBaseline="middle"
-              fontSize={12} fill={phase.color} fillOpacity={isGhosted ? 0.1 : 0.7}
-              style={{ cursor: 'pointer', userSelect: 'none' }}
-              onClick={(e) => { e.stopPropagation(); onToggleCollapse(phase.id); }}
-            >
-              ◀
-            </text>
           </g>
         );
       })}

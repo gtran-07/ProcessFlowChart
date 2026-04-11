@@ -46,7 +46,7 @@ export const GroupCard = memo(function GroupCard({
     designMode, designTool,
     setSelectedGroup,
     toggleMultiSelect,
-    saveLayoutToCache, setHoveredNode,
+    saveLayoutToCache, settleAndResolve, setHoveredNode,
   } = useGraphStore();
 
   const groupRef = useRef<SVGGElement>(null);
@@ -215,6 +215,8 @@ export const GroupCard = memo(function GroupCard({
           if (Object.keys(snapBackUpdates).length > 0) {
             useGraphStore.setState((s) => ({ positions: { ...s.positions, ...snapBackUpdates } }));
           }
+          // Anchor all dragged items; push any non-dragged bystanders out of the way
+          settleAndResolve(new Set(Object.keys(multiStartPositions)));
           saveLayoutToCache();
         } else {
           // Single-group drop: check phase boundaries
@@ -252,48 +254,8 @@ export const GroupCard = memo(function GroupCard({
             }));
             setTimeout(() => el?.classList.remove('node-snapping'), 300);
           } else {
-            // Valid drop — if this group belongs to a phase, push non-members out
-            const myPhase = phases.find(
-              (ph) =>
-                (ph.groupIds ?? []).includes(group.id) ||
-                ph.nodeIds.some((nid) => descendantIds.has(nid))
-            );
-            if (myPhase) {
-              const nodePos = myPhase.nodeIds.map((nid) => positions[nid]).filter((p): p is { x: number; y: number } => !!p);
-              const grpPos = (myPhase.groupIds ?? []).map((gid) => positions[gid]).filter((p): p is { x: number; y: number } => !!p);
-              if (nodePos.length > 0 || grpPos.length > 0) {
-                const allXMins = [...nodePos.map((p) => p.x), ...grpPos.map((p) => p.x - GROUP_R)];
-                const allXMaxes = [...nodePos.map((p) => p.x + NODE_W), ...grpPos.map((p) => p.x + GROUP_R)];
-                const newBandMinX = Math.min(...allXMins) - PHASE_PAD_X;
-                const newBandMaxX = Math.max(...allXMaxes) + PHASE_PAD_X;
-                const GAP = 20;
-                const pushUpdates: Record<string, { x: number; y: number }> = {};
-
-                // Push non-member nodes out
-                const myPhaseNodeSet = new Set(myPhase.nodeIds);
-                const myPhaseGroupSet = new Set(myPhase.groupIds ?? []);
-                Object.entries(positions).forEach(([id, pos]) => {
-                  if (myPhaseNodeSet.has(id) || myPhaseGroupSet.has(id)) return;
-                  const isNode = !allGroups.some((g) => g.id === id);
-                  const isCollapsedGroup = allGroups.some((g) => g.id === id && g.collapsed);
-                  if (!isNode && !isCollapsedGroup) return;
-                  const left = isCollapsedGroup ? pos.x - GROUP_R : pos.x;
-                  const right = isCollapsedGroup ? pos.x + GROUP_R : pos.x + NODE_W;
-                  if (right > newBandMinX && left < newBandMaxX) {
-                    const centerX = (left + right) / 2;
-                    if (centerX < (newBandMinX + newBandMaxX) / 2) {
-                      pushUpdates[id] = { ...pos, x: isCollapsedGroup ? newBandMinX - GROUP_R - GAP : newBandMinX - NODE_W - GAP };
-                    } else {
-                      pushUpdates[id] = { ...pos, x: isCollapsedGroup ? newBandMaxX + GROUP_R + GAP : newBandMaxX + GAP };
-                    }
-                  }
-                });
-
-                if (Object.keys(pushUpdates).length > 0) {
-                  useGraphStore.setState((s) => ({ positions: { ...s.positions, ...pushUpdates } }));
-                }
-              }
-            }
+            // Valid drop — anchor this group, run full phase + overlap settlement
+            settleAndResolve(new Set([group.id]));
             saveLayoutToCache();
           }
         }

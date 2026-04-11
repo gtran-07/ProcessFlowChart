@@ -25,7 +25,7 @@ import { PhaseLayer } from './PhaseLayer';
 import { PhaseNavigator } from './PhaseNavigator';
 import { PhaseCrowns } from './PhaseCrowns';
 import type { CrownBand } from './PhaseCrowns';
-import { NODE_W, computePhaseAdjustedPositions } from '../../utils/layout';
+import { NODE_W, LANE_LABEL_W, computePhaseAdjustedPositions } from '../../utils/layout';
 import { DesignToolbar } from '../DesignMode/DesignToolbar';
 import {
   computeGroupNestLevel,
@@ -46,7 +46,7 @@ export function Canvas() {
     enterFocusMode, hoveredNodeId, fitToScreen, clearGraph,
     groups, toggleGroupCollapse, clearMultiSelect,
     phases, focusedPhaseId, selectedPhaseId, setFocusedPhaseId, setSelectedPhaseId,
-    collapsedPhaseIds, togglePhaseCollapse,
+    collapsedPhaseIds, togglePhaseCollapse, collapseAllPhases, expandAllPhases,
   } = useGraphStore();
 
 
@@ -94,8 +94,8 @@ export function Canvas() {
   // Nodes to the right of a collapsed band shift left to fill freed space.
   // Stored positions are never mutated.
   const adjustedPositions = useMemo(() => {
-    if (viewMode !== 'dag' || collapsedPhaseIds.length === 0) return positions;
-    return computePhaseAdjustedPositions(phases, positions, collapsedPhaseIds, NODE_W).adjustedPositions;
+    if (collapsedPhaseIds.length === 0) return positions;
+    return computePhaseAdjustedPositions(phases, positions, collapsedPhaseIds, NODE_W, viewMode === 'lanes' ? LANE_LABEL_W : undefined).adjustedPositions;
   }, [phases, positions, collapsedPhaseIds, viewMode]);
 
   // ── Phase crown bands + viewport-presence set ─────────────────────────
@@ -326,12 +326,16 @@ export function Canvas() {
       return;
     }
 
-    // Click on background — deselect and clear multi-select
+    // Click on background or phase — deselect nodes/groups and clear multi-select.
+    // Clicking a phase should still deselect nodes/groups; the phase click handler
+    // selects the phase separately via onPhaseClick.
     const clickedPhase = target.closest('[data-phase-id]');
-    if (!clickedNode && !clickedGroup && !clickedPhase) {
+    if (!clickedNode && !clickedGroup) {
       setSelectedNode(null);
-      setSelectedPhaseId(null);
       clearMultiSelect();
+      if (!clickedPhase) {
+        setSelectedPhaseId(null);
+      }
     }
   }
 
@@ -520,7 +524,7 @@ export function Canvas() {
           {/* Layer order: lanes background → edges → nodes (nodes always on top) */}
           {/* key causes React to remount when view/focus changes, replaying the CSS fade-in */}
           <g key={`${viewMode}-${focusMode ? focusNodeId : 'normal'}`} id="graph-content">
-          {/* Phase bands — rendered first, behind everything else */}
+          {/* Phase bands — fills + borders only, rendered first behind everything */}
           <g id="phase-layer">
             <PhaseLayer
               phases={phases}
@@ -537,6 +541,7 @@ export function Canvas() {
               onPhaseClick={(id) => setSelectedPhaseId(id)}
               onPhaseDoubleClick={(id) => togglePhaseCollapse(id)}
               onToggleCollapse={togglePhaseCollapse}
+              renderPart="background"
             />
           </g>
           <g id="lanes-layer">
@@ -637,7 +642,37 @@ export function Canvas() {
               );
             })}
           </g>
+
           </g>{/* end graph-content */}
+        </g>
+
+        {/* Phase header strips — rendered as a sibling to #graph-root so they always
+            paint above node compositing layers (will-change:opacity promotes NodeCards
+            to GPU layers; anything inside #graph-root that isn't also promoted gets
+            drawn into the background layer and covered). Applying the same transform
+            keeps coordinates identical. */}
+        <g
+          id="phase-headers-overlay"
+          transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}
+          style={{ willChange: 'transform' }}
+        >
+          <PhaseLayer
+            phases={phases}
+            nodes={visibleNodes}
+            groups={groups}
+            positions={adjustedPositions}
+            focusedPhaseId={focusedPhaseId}
+            selectedPhaseId={selectedPhaseId}
+            canvasHeight={svgBandHeight}
+            collapsedPhaseIds={collapsedPhaseIds}
+            viewMode={viewMode}
+            designMode={designMode}
+            screenToSvg={screenToSvg}
+            onPhaseClick={(id) => setSelectedPhaseId(id)}
+            onPhaseDoubleClick={(id) => togglePhaseCollapse(id)}
+            onToggleCollapse={togglePhaseCollapse}
+            renderPart="headers"
+          />
         </g>
       </svg>
 
@@ -678,6 +713,8 @@ export function Canvas() {
           onFocusPhase={setFocusedPhaseId}
           onCreatePhase={() => document.dispatchEvent(new CustomEvent('flowgraph:create-phase', { detail: {} }))}
           onToggleCollapse={togglePhaseCollapse}
+          onCollapseAll={collapseAllPhases}
+          onExpandAll={expandAllPhases}
         />
       )}
 
