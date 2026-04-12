@@ -93,6 +93,11 @@
   background: rgba(167,139,250,.07) !important;
   color: var(--design) !important;
 }
+.emptyActionBtnSample:hover {
+  border-color: #2dd4bf !important;
+  background: rgba(45,212,191,.07) !important;
+  color: #2dd4bf !important;
+}
 .emptyActionLabel {
   font-size: 12px; font-weight: 700;
 }

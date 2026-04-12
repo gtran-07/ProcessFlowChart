@@ -153,6 +153,23 @@ export function Header() {
     return () => document.removeEventListener('flowgraph:open-file-picker', handleOpenFile);
   }, [handleOpenFile]);
 
+  // ── Load sample flowchart from public/sample.json ─────────────────────
+  useEffect(() => {
+    const handleLoadSample = async () => {
+      try {
+        const base = (import.meta as unknown as { env: { BASE_URL: string } }).env.BASE_URL;
+        const res = await fetch(`${base}sample.json`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
+        parseAndLoad(text, 'sample.json', null);
+      } catch (err) {
+        alert(`Failed to load sample: ${(err as Error).message}`);
+      }
+    };
+    document.addEventListener('flowgraph:load-sample', handleLoadSample);
+    return () => document.removeEventListener('flowgraph:load-sample', handleLoadSample);
+  }, [parseAndLoad]);
+
   // ── Save — writes in-place if handle available, downloads otherwise ───
   const handleSaveJson = useCallback(async () => {
     const dagLayout   = viewMode === 'dag'   ? { positions, transform } : (layoutCache['dag']   ?? null);
