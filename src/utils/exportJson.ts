@@ -9,7 +9,7 @@
  * What does NOT belong here: any React state, DOM manipulation beyond the download link.
  */
 
-import type { GraphNode, GraphGroup, GraphPhase, Position, Transform } from '../types/graph';
+import type { GraphNode, GraphGroup, GraphPhase, NodeTag, Position, Transform } from '../types/graph';
 
 /** One view's saved layout — positions for every node + the viewport transform. */
 export interface ViewLayout {
@@ -51,6 +51,8 @@ export function buildExportPayload(
   lanesLayout?: ViewLayout | null,
   groups?: GraphGroup[],
   phases?: GraphPhase[],
+  tagRegistry?: NodeTag[],
+  ownerRegistry?: string[],
 ): object {
   const nodeData = nodes.map((node) => ({
     id: node.id,
@@ -58,11 +60,14 @@ export function buildExportPayload(
     owner: node.owner,
     description: node.description,
     dependencies: node.dependencies,
+    ...(node.tags && node.tags.length > 0 ? { tags: node.tags } : {}),
   }));
 
   const hasLayout = dagLayout || lanesLayout;
   const hasGroups = groups && groups.length > 0;
   const hasPhases = phases && phases.length > 0;
+  const hasTagRegistry = tagRegistry && tagRegistry.length > 0;
+  const hasOwnerRegistry = ownerRegistry && ownerRegistry.length > 0;
 
   // Serialize phases: omit groupIds when empty to keep JSON clean for graphs without group membership
   const phasesData = phases?.map((p) => ({
@@ -75,6 +80,8 @@ export function buildExportPayload(
       nodes: nodeData,
       ...(hasGroups ? { groups } : {}),
       ...(hasPhases ? { phases: phasesData } : {}),
+      ...(hasTagRegistry ? { tagRegistry } : {}),
+      ...(hasOwnerRegistry ? { ownerRegistry } : {}),
       _layout: {
         currentView: currentView ?? 'dag',
         dag: dagLayout ?? null,
@@ -83,11 +90,13 @@ export function buildExportPayload(
     };
   }
 
-  if (hasGroups || hasPhases) {
+  if (hasGroups || hasPhases || hasTagRegistry || hasOwnerRegistry) {
     return {
       nodes: nodeData,
       ...(hasGroups ? { groups } : {}),
       ...(hasPhases ? { phases: phasesData } : {}),
+      ...(hasTagRegistry ? { tagRegistry } : {}),
+      ...(hasOwnerRegistry ? { ownerRegistry } : {}),
     };
   }
 
@@ -102,8 +111,10 @@ export function exportGraphToJson(
   filename = 'flowgraph.json',
   groups?: GraphGroup[],
   phases?: GraphPhase[],
+  tagRegistry?: NodeTag[],
+  ownerRegistry?: string[],
 ): void {
-  const exportData = buildExportPayload(nodes, currentView, dagLayout, lanesLayout, groups, phases);
+  const exportData = buildExportPayload(nodes, currentView, dagLayout, lanesLayout, groups, phases, tagRegistry, ownerRegistry);
   const jsonString = JSON.stringify(exportData, null, 2);
 
   // Create a downloadable Blob from the JSON string

@@ -26,9 +26,9 @@ export function Header() {
     allNodes, allEdges, visibleNodes, viewMode, designMode, designDirty,
     setViewMode, setDesignMode, loadData, rebuildGraph, clearGraph,
     saveNamedLayout, loadNamedLayout, fitToScreen, resolveOverlaps,
-    setSelectedNode, setLastJumpedNode, positions, setTransform, transform,
+    setSelectedNode, setLastJumpedNode, positions, setTransform, transform, flyTo,
     activeOwners, toggleOwner, layoutCache, currentFileName, ownerColors,
-    fileHandle, setFileHandle, setCurrentFileName, groups, phases,
+    fileHandle, setFileHandle, setCurrentFileName, groups, phases, tagRegistry, ownerRegistry,
   } = useGraphStore();
 
   // True when File System Access API is available (Chrome/Edge 86+)
@@ -94,6 +94,16 @@ export function Header() {
       } else if (!savedLayout && Array.isArray(obj.phases)) {
         savedLayout = { positions: {}, transform: { x: 0, y: 0, k: 1 }, phases: obj.phases } as unknown as typeof savedLayout;
       }
+      if (savedLayout && Array.isArray(obj.tagRegistry)) {
+        (savedLayout as Record<string, unknown>).tagRegistry = obj.tagRegistry;
+      } else if (!savedLayout && Array.isArray(obj.tagRegistry)) {
+        savedLayout = { positions: {}, transform: { x: 0, y: 0, k: 1 }, tagRegistry: obj.tagRegistry } as unknown as typeof savedLayout;
+      }
+      if (savedLayout && Array.isArray(obj.ownerRegistry)) {
+        (savedLayout as Record<string, unknown>).ownerRegistry = obj.ownerRegistry;
+      } else if (!savedLayout && Array.isArray(obj.ownerRegistry)) {
+        savedLayout = { positions: {}, transform: { x: 0, y: 0, k: 1 }, ownerRegistry: obj.ownerRegistry } as unknown as typeof savedLayout;
+      }
     } else {
       alert('JSON must be an array of nodes or an object with a "nodes" array.');
       return;
@@ -105,12 +115,13 @@ export function Header() {
       owner: String(raw.owner ?? 'Unknown'),
       description: String(raw.description ?? ''),
       dependencies: Array.isArray(raw.dependencies) ? raw.dependencies.map(String) : [],
+      ...(Array.isArray(raw.tags) && raw.tags.length > 0 ? { tags: raw.tags as import('../../types/graph').NodeTag[] } : {}),
     }));
 
     loadData(nodes, savedLayout, fileName);
     setFileHandle(handle); // null for legacy input, FileSystemFileHandle for API
     setLastSavedAt(null); // new file — reset save timestamp
-    if (!savedLayout) setTimeout(() => fitToScreen(), 100);
+    if (!savedLayout) setTimeout(() => fitToScreen(false), 100);
   }, [loadData, setFileHandle, fitToScreen]);
 
   // ── Primary file open — File System Access API (Chrome/Edge) ─────────
@@ -181,7 +192,7 @@ export function Header() {
       try {
         const perm = await fileHandle.requestPermission({ mode: 'readwrite' });
         if (perm !== 'granted') throw new Error('Write permission denied');
-        const payload = buildExportPayload(allNodes, viewMode, dagLayout, lanesLayout, groups, phases);
+        const payload = buildExportPayload(allNodes, viewMode, dagLayout, lanesLayout, groups, phases, tagRegistry, ownerRegistry);
         const writable = await fileHandle.createWritable();
         await writable.write(JSON.stringify(payload, null, 2));
         await writable.close();
@@ -189,22 +200,22 @@ export function Header() {
       } catch (err) {
         if ((err as Error).name !== 'AbortError') {
           // Permission denied or write error — fall back to download so no data is lost
-          exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, currentFileName ?? undefined, groups, phases);
+          exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, currentFileName ?? undefined, groups, phases, tagRegistry, ownerRegistry);
           setLastSavedAt(new Date());
         }
       }
     } else {
-      exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, currentFileName ?? undefined, groups, phases);
+      exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, currentFileName ?? undefined, groups, phases, tagRegistry, ownerRegistry);
       setLastSavedAt(new Date());
     }
-  }, [fileHandle, viewMode, positions, transform, layoutCache, allNodes, currentFileName, groups, phases]);
+  }, [fileHandle, viewMode, positions, transform, layoutCache, allNodes, currentFileName, groups, phases, tagRegistry, ownerRegistry]);
 
   // ── Save As — pick a new file path, write, and update the handle ────────
   const handleSaveAs = useCallback(async () => {
     setSaveMenuOpen(false);
     const dagLayout   = viewMode === 'dag'   ? { positions, transform } : (layoutCache['dag']   ?? null);
     const lanesLayout = viewMode === 'lanes' ? { positions, transform } : (layoutCache['lanes'] ?? null);
-    const payload = buildExportPayload(allNodes, viewMode, dagLayout, lanesLayout, groups, phases);
+    const payload = buildExportPayload(allNodes, viewMode, dagLayout, lanesLayout, groups, phases, tagRegistry, ownerRegistry);
     const json = JSON.stringify(payload, null, 2);
 
     if (window.showSaveFilePicker) {
@@ -229,11 +240,11 @@ export function Header() {
       const name = window.prompt('Enter a filename for the saved file:', currentFileName ?? 'flowgraph.json');
       if (!name) return;
       const safeName = name.endsWith('.json') ? name : `${name}.json`;
-      exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, safeName, groups, phases);
+      exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, safeName, groups, phases, tagRegistry, ownerRegistry);
       setCurrentFileName(safeName);
       setLastSavedAt(new Date());
     }
-  }, [viewMode, positions, transform, layoutCache, allNodes, currentFileName, setFileHandle, setCurrentFileName, groups, phases]);
+  }, [viewMode, positions, transform, layoutCache, allNodes, currentFileName, setFileHandle, setCurrentFileName, groups, phases, tagRegistry, ownerRegistry]);
 
   // ── Reload from file — re-read via fileHandle and restore saved state ───
   const handleReloadFromFile = useCallback(async () => {
@@ -344,7 +355,7 @@ export function Header() {
     const targetScale = 0.75;
     const newX = canvasW / 2 - (pos.x + NODE_W / 2) * targetScale;
     const newY = canvasH / 2 - (pos.y + NODE_H / 2) * targetScale;
-    setTransform({ x: newX, y: newY, k: targetScale });
+    flyTo({ x: newX, y: newY, k: targetScale });
 
     // Trigger the pulsing glow — stays until a different node is selected
     setLastJumpedNode(nodeId);

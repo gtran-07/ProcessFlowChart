@@ -40,7 +40,7 @@ import styles from './Canvas.module.css';
 export function Canvas() {
   const {
     visibleNodes, visibleEdges, positions, transform,
-    setTransform, saveLayoutToCache,
+    setTransform, saveLayoutToCache, flyTarget, clearFlyTarget,
     focusMode, focusNodeId, exitFocusMode,
     designMode, designTool, connectSourceId, setConnectSource,
     addEdge, addNode, setSelectedNode,
@@ -156,6 +156,30 @@ export function Canvas() {
   // ── Pan state (local — doesn't need to be in global store) ────────────
   const panState = useRef<{ startX: number; startY: number; startTX: number; startTY: number } | null>(null);
 
+  // ── Space-key pan mode ────────────────────────────────────────────────
+  // Holding Space activates a temporary pan mode: cursor changes to grab/grabbing
+  // and mousedown anywhere on the canvas (even over nodes) starts panning.
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.code !== 'Space') return;
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      e.preventDefault(); // prevent page scroll
+      setSpaceHeld(true);
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.code !== 'Space') return;
+      setSpaceHeld(false);
+    }
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('keyup', onKeyUp);
+    };
+  }, []);
+
   // ── Ghost edge mouse position (for drawing connections) ───────────────
   const [ghostTarget, setGhostTarget] = useState<{ x: number; y: number } | null>(null);
 
@@ -257,11 +281,23 @@ export function Canvas() {
 
   // ── Pan: start on mousedown on SVG background ─────────────────────────
   function handleSvgMouseDown(e: React.MouseEvent<SVGSVGElement>) {
+    // Space held: pan from anywhere (even over nodes); skip other tool logic
+    if (spaceHeld) {
+      cancelFlyAnimation();
+      panState.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        startTX: transform.x,
+        startTY: transform.y,
+      };
+      return;
+    }
     // Only start panning if clicking directly on the SVG or graph root (not a node)
     const target = e.target as Element;
     if (target.closest('.node-group') || target.closest('.edge-hit') || target.closest('.group-overlay')) return;
     if (designMode && designTool === 'add') return; // Add tool uses click, not drag
 
+    cancelFlyAnimation(); // Cancel any in-progress fly animation so the user takes over immediately
     panState.current = {
       startX: e.clientX,
       startY: e.clientY,
@@ -272,17 +308,20 @@ export function Canvas() {
 
   // ── Pan: update on mousemove ──────────────────────────────────────────
   function handleSvgMouseMove(e: React.MouseEvent<SVGSVGElement>) {
-    // Update ghost edge target if connecting
-    if (designMode && designTool === 'connect' && connectSourceId) {
-      const pt = screenToSvg(e.clientX, e.clientY);
-      setGhostTarget(pt);
-    }
+    // Space pan mode: only run pan logic, skip all other pointer actions
+    if (!spaceHeld) {
+      // Update ghost edge target if connecting
+      if (designMode && designTool === 'connect' && connectSourceId) {
+        const pt = screenToSvg(e.clientX, e.clientY);
+        setGhostTarget(pt);
+      }
 
-    // Track mouse position for node hover tooltip
-    const wrap = canvasWrapRef.current;
-    if (wrap) {
-      const rect = wrap.getBoundingClientRect();
-      setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+      // Track mouse position for node hover tooltip
+      const wrap = canvasWrapRef.current;
+      if (wrap) {
+        const rect = wrap.getBoundingClientRect();
+        setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+      }
     }
 
     if (!panState.current) return;
@@ -319,12 +358,71 @@ export function Canvas() {
   const transformRef = useRef<Transform>(transform);
   useEffect(() => { transformRef.current = transform; }, [transform]);
 
+  // ── Fly-to animation ──────────────────────────────────────────────────────
+  // When flyTarget is set (by search, view-switch, fit-to-screen, etc.), smoothly
+  // animate the viewport from its current position to the target using easeOutCubic.
+  // User pan or scroll cancels the animation immediately.
+  const flyAnimRef = useRef<number | null>(null);
+
+  function cancelFlyAnimation() {
+    if (flyAnimRef.current !== null) {
+      cancelAnimationFrame(flyAnimRef.current);
+      flyAnimRef.current = null;
+      clearFlyTarget();
+    }
+  }
+
+  useEffect(() => {
+    if (!flyTarget) return;
+
+    // Cancel any in-progress animation
+    if (flyAnimRef.current !== null) cancelAnimationFrame(flyAnimRef.current);
+
+    const from = { ...transformRef.current };
+    const to = flyTarget;
+    const startTime = performance.now();
+    const DURATION = 450; // ms
+
+    function easeOutCubic(t: number) {
+      return 1 - Math.pow(1 - t, 3);
+    }
+
+    function step() {
+      const elapsed = performance.now() - startTime;
+      const t = Math.min(elapsed / DURATION, 1);
+      const e = easeOutCubic(t);
+      setTransform({
+        x: from.x + (to.x - from.x) * e,
+        y: from.y + (to.y - from.y) * e,
+        k: from.k + (to.k - from.k) * e,
+      });
+      if (t < 1) {
+        flyAnimRef.current = requestAnimationFrame(step);
+      } else {
+        setTransform(to);
+        clearFlyTarget();
+        flyAnimRef.current = null;
+      }
+    }
+
+    flyAnimRef.current = requestAnimationFrame(step);
+
+    return () => {
+      if (flyAnimRef.current !== null) {
+        cancelAnimationFrame(flyAnimRef.current);
+        flyAnimRef.current = null;
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flyTarget]); // flyTarget identity change is the only trigger; setTransform/clearFlyTarget are stable
+
   useEffect(() => {
     const svgEl = svgRef.current;
     if (!svgEl) return;
 
     function onWheel(e: WheelEvent) {
       e.preventDefault();
+      cancelFlyAnimation(); // Let the user take over immediately
       const rect = svgEl!.getBoundingClientRect();
       const cursorX = e.clientX - rect.left;
       const cursorY = e.clientY - rect.top;
@@ -343,6 +441,7 @@ export function Canvas() {
 
   // ── Click on SVG background ───────────────────────────────────────────
   function handleSvgClick(e: React.MouseEvent<SVGSVGElement>) {
+    if (spaceHeld) return; // space pan mode — no selections or tool actions
     const target = e.target as Element;
     const clickedNode = target.closest('.node-group');
     const clickedEdge = target.closest('.edge-hit');
@@ -379,6 +478,7 @@ export function Canvas() {
 
   // ── Double-click on SVG background — exit focus mode ─────────────────
   function handleSvgDblClick(e: React.MouseEvent<SVGSVGElement>) {
+    if (spaceHeld) return; // space pan mode — no actions
     const target = e.target as Element;
     if (target.closest('.node-group')) return; // Node dblclick handled in NodeCard
     if (target.closest('.group-overlay')) return; // Group dblclick handled in GroupCard
@@ -529,11 +629,13 @@ export function Canvas() {
   }, []);
 
   // ── Cursor style based on active tool ─────────────────────────────────
-  const canvasCursor = designMode && designTool === 'add'
-    ? 'cell'
-    : designMode && designTool === 'connect'
-      ? 'crosshair'
-      : panState.current ? 'grabbing' : 'grab';
+  const canvasCursor = spaceHeld
+    ? (panState.current ? 'grabbing' : 'grab')
+    : designMode && designTool === 'add'
+      ? 'cell'
+      : designMode && designTool === 'connect'
+        ? 'crosshair'
+        : panState.current ? 'grabbing' : 'grab';
 
   return (
     <div
@@ -634,7 +736,7 @@ export function Canvas() {
         <g id="graph-root" transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}>
           {/* Layer order: lanes background → edges → nodes (nodes always on top) */}
           {/* key causes React to remount when view/focus changes, replaying the CSS fade-in */}
-          <g key={`${viewMode}-${focusMode ? focusNodeId : 'normal'}`} id="graph-content">
+          <g key={`${viewMode}-${focusMode ? focusNodeId : 'normal'}`} id="graph-content" style={spaceHeld ? { pointerEvents: 'none' } : undefined}>
           {/* Phase bands — fills + borders only, rendered first behind everything */}
           <g id="phase-layer">
             <PhaseLayer
@@ -657,6 +759,7 @@ export function Canvas() {
               renderPart="background"
               transform={transform}
               canvasPixelHeight={canvasPixelHeight}
+              spaceHeld={spaceHeld}
             />
           </g>
           <g id="lanes-layer">
@@ -791,6 +894,7 @@ export function Canvas() {
             renderPart="headers"
             transform={transform}
             canvasPixelHeight={canvasPixelHeight}
+            spaceHeld={spaceHeld}
           />
         </g>
       </svg>
@@ -931,19 +1035,6 @@ export function Canvas() {
             // pointer-events:none so it never captures mouse events
           >
             <div className={styles.nodeTooltipName}>{hovNode.name}</div>
-            {hovNode.tags && hovNode.tags.length > 0 && (
-              <div className={styles.nodeTooltipTags}>
-                {hovNode.tags.map((tag, i) => (
-                  <span
-                    key={i}
-                    className={styles.nodeTooltipTag}
-                    style={{ background: tag.color }}
-                  >
-                    {tag.label}
-                  </span>
-                ))}
-              </div>
-            )}
           </div>
         );
       })()}

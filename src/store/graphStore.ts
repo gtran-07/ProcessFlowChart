@@ -21,6 +21,7 @@ import type {
   GraphEdge,
   GraphGroup,
   GraphPhase,
+  NodeTag,
   Position,
   Transform,
   ViewMode,
@@ -111,6 +112,12 @@ export interface GraphStore {
   // ── Canvas viewport ───────────────────────────────────────────────────────
   /** Current pan (x, y) and zoom (k) applied to the graph canvas */
   transform: Transform;
+  /**
+   * When non-null, Canvas.tsx will animate the transform from its current value
+   * to this target using a smooth easeOutCubic "fly-to" animation.
+   * Set via flyTo(); cleared by Canvas after animation completes.
+   */
+  flyTarget: Transform | null;
 
   // ── Design mode ───────────────────────────────────────────────────────────
   /** True when design mode is active (the user clicked the Design button) */
@@ -188,7 +195,11 @@ export interface GraphStore {
   saveLayoutToCache: () => void;
   saveNamedLayout: (name: string) => void;
   loadNamedLayout: (snapshot: LayoutSnapshot, viewMode: ViewMode) => void;
-  fitToScreen: () => void;
+  fitToScreen: (animate?: boolean) => void;
+  /** Trigger a smooth animated pan+zoom to the given transform. */
+  flyTo: (target: Transform) => void;
+  /** Clear flyTarget after animation finishes (called by Canvas). */
+  clearFlyTarget: () => void;
 
   // ── Group actions ──────────────────────────────────────────────────────────
   /** Create a new group from selected node IDs and optional child group IDs */
@@ -270,6 +281,40 @@ export interface GraphStore {
   setSelectedPhaseId: (id: string | null) => void;
   /** Set the focused phase ID (Navigator spotlight) */
   setFocusedPhaseId: (id: string | null) => void;
+
+  // ── Owner & tag management ─────────────────────────────────────────────────
+  /** Override the display color for an owner */
+  setOwnerColor: (owner: string, color: string) => void;
+  /** Rename an owner across all nodes, updating colors and active filter set */
+  renameOwner: (oldName: string, newName: string) => void;
+  /** Change the color of every tag with the given label across all nodes */
+  recolorTag: (label: string, color: string) => void;
+  /** Rename a tag label across all nodes */
+  renameTag: (oldLabel: string, newLabel: string) => void;
+
+  // ── Tag registry ───────────────────────────────────────────────────────────
+  /**
+   * Session-only registry of tags created in the sidebar but not yet assigned to
+   * any node. These appear in the node-edit dropdown so users can pre-define tags.
+   * Not serialized — entries survive only until the next file load/clear.
+   */
+  tagRegistry: NodeTag[];
+  /** Add a tag to the session registry (no-op if a tag with that label already exists) */
+  addTagToRegistry: (tag: NodeTag) => void;
+  /** Remove a tag from the session registry by label */
+  removeTagFromRegistry: (label: string) => void;
+
+  // ── Owner registry ──────────────────────────────────────────────────────────
+  /**
+   * Registry of owner names pre-created in the sidebar (design mode).
+   * Owners here appear in the Owners filter pane and the node-edit owner dropdown
+   * even before any node is assigned to them. Serialized with the file.
+   */
+  ownerRegistry: string[];
+  /** Add an owner to the registry (no-op if the name already exists on a node or in the registry) */
+  addOwnerToRegistry: (name: string) => void;
+  /** Remove an owner from the registry by name (only registry-only owners; no-op if a node uses it) */
+  removeOwnerFromRegistry: (name: string) => void;
 }
 
 // ─── HELPER: compute visible nodes/edges from current state ─────────────────
@@ -373,6 +418,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   focusNodeId: null,
   preFocusSnapshot: null,
   transform: { x: 0, y: 0, k: 1 },
+  flyTarget: null,
   designMode: false,
   designTool: 'select',
   connectSourceId: null,
@@ -389,6 +435,8 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   currentFileName: null,
   fileHandle: null,
   clipboard: [],
+  tagRegistry: [],
+  ownerRegistry: [],
 
   // ── clearGraph ────────────────────────────────────────────────────────────
   clearGraph: () => {
@@ -425,6 +473,8 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       collapsedPhaseIds: [],
       currentFileName: null,
       fileHandle: null,
+      tagRegistry: [],
+      ownerRegistry: [],
     });
   },
 
@@ -450,6 +500,10 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     const groups: GraphGroup[] = (savedLayout as { groups?: GraphGroup[] } | null)?.groups ?? [];
     // Extract phases from savedLayout if present (backward compat — default empty)
     const phases: GraphPhase[] = (savedLayout as { phases?: GraphPhase[] } | null)?.phases ?? [];
+    // Extract tagRegistry from savedLayout if present (backward compat — default empty)
+    const tagRegistry: NodeTag[] = (savedLayout as { tagRegistry?: NodeTag[] } | null)?.tagRegistry ?? [];
+    // Extract ownerRegistry from savedLayout if present (backward compat — default empty)
+    const ownerRegistry: string[] = (savedLayout as { ownerRegistry?: string[] } | null)?.ownerRegistry ?? [];
 
     const { visibleNodes, visibleEdges } = deriveVisibility(
       nodes, allEdges, activeOwners, false, null, groups
@@ -518,6 +572,8 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       selectedPhaseId: null,
       focusedPhaseId: null,
       collapsedPhaseIds: [],
+      tagRegistry,
+      ownerRegistry,
       transform: activeLayout ? activeLayout.transform : { x: 0, y: 0, k: 1 },
       currentFileName: fileName ?? null,
       fileHandle: null, // caller sets this via setFileHandle after loadData
@@ -768,6 +824,10 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   // ── setTransform ──────────────────────────────────────────────────────────
   setTransform: (transform: Transform) => set({ transform }),
 
+  // ── flyTo / clearFlyTarget ────────────────────────────────────────────────
+  flyTo: (target: Transform) => set({ flyTarget: target }),
+  clearFlyTarget: () => set({ flyTarget: null }),
+
   // ── setDesignMode ─────────────────────────────────────────────────────────
   setDesignMode: (on: boolean) => {
     set({
@@ -830,15 +890,16 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
           ? enforcePhaseZones(cachedLayout.positions, state.phases, NODE_W)
           : enforceAllPhaseBoundaries(cachedLayout.positions, state.phases, state.groups, GROUP_R, LANE_LABEL_W)
         : cachedLayout.positions;
+      // Apply positions/viewMode first (keep current transform), then fly to the saved transform.
       set({
         viewMode: mode,
         layoutCache: cache,
         positions: restoredPositions,
-        transform: cachedLayout.transform,
         laneMetrics: mode === 'lanes'
           ? computeLaneLayout(state.visibleNodes, state.visibleEdges, state.activeOwners, state.allNodes).laneMetrics
           : {},
       });
+      set({ flyTarget: cachedLayout.transform });
     } else {
       // No cache (or in focus mode) — compute fresh positions for the current visible set
       const { positions: rawPositions, laneMetrics } = derivePositions(
@@ -1187,13 +1248,13 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
 
     set({
       positions: enforcedPositions,
-      transform: snapshot.transform,
       viewMode,
       visibleNodes,
       visibleEdges,
       focusMode: false,
       focusNodeId: null,
     });
+    set({ flyTarget: snapshot.transform });
   },
 
   // ── fitToScreen ───────────────────────────────────────────────────────────
@@ -1204,7 +1265,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
    * This is called after loading data or resetting layout. The canvas element's
    * dimensions are read from the DOM to compute the correct scale and offset.
    */
-  fitToScreen: () => {
+  fitToScreen: (animate = true) => {
     const state = get();
     if (Object.keys(state.positions).length === 0) return;
 
@@ -1234,7 +1295,12 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     const offsetX = (canvasW - graphW * scale) / 2 - minX * scale;
     const offsetY = (canvasH - graphH * scale) / 2 - minY * scale;
 
-    set({ transform: { x: offsetX, y: offsetY, k: scale } });
+    const target = { x: offsetX, y: offsetY, k: scale };
+    if (animate) {
+      set({ flyTarget: target });
+    } else {
+      set({ transform: target });
+    }
   },
 
   // ── createGroup ───────────────────────────────────────────────────────────
@@ -1864,5 +1930,131 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       undoStack,
       redoStack: [],
     });
+  },
+
+  // ── setOwnerColor ─────────────────────────────────────────────────────────
+  setOwnerColor: (owner, color) => {
+    set((s) => ({ ownerColors: { ...s.ownerColors, [owner]: color } }));
+  },
+
+  // ── renameOwner ───────────────────────────────────────────────────────────
+  renameOwner: (oldName, newName) => {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === oldName) return;
+    const state = get();
+
+    const allNodes = state.allNodes.map((n) =>
+      n.owner === oldName ? { ...n, owner: trimmed } : n
+    );
+
+    const ownerColors = { ...state.ownerColors };
+    if (ownerColors[oldName] !== undefined) {
+      ownerColors[trimmed] = ownerColors[oldName];
+      delete ownerColors[oldName];
+    }
+
+    const activeOwners = new Set(state.activeOwners);
+    if (activeOwners.has(oldName)) {
+      activeOwners.delete(oldName);
+      activeOwners.add(trimmed);
+    }
+
+    const groups = state.groups.map((g) => ({
+      ...g,
+      owners: g.owners.map((o) => (o === oldName ? trimmed : o)),
+    }));
+
+    const { visibleNodes, visibleEdges } = deriveVisibility(
+      allNodes, state.allEdges, activeOwners, state.focusMode, state.focusNodeId, groups
+    );
+
+    set({ allNodes, ownerColors, activeOwners, groups, visibleNodes, visibleEdges, designDirty: true });
+  },
+
+  // ── recolorTag ────────────────────────────────────────────────────────────
+  recolorTag: (label, color) => {
+    const key = label.toLowerCase();
+    set((s) => {
+      const updateNodes = (nodes: typeof s.allNodes) =>
+        nodes.map((n) => {
+          if (!n.tags?.some((t) => t.label.toLowerCase() === key)) return n;
+          return { ...n, tags: n.tags.map((t) => t.label.toLowerCase() === key ? { ...t, color } : t) };
+        });
+      const tagRegistry = s.tagRegistry.map((t) =>
+        t.label.toLowerCase() === key ? { ...t, color } : t
+      );
+      return {
+        allNodes: updateNodes(s.allNodes),
+        visibleNodes: updateNodes(s.visibleNodes),
+        tagRegistry,
+        designDirty: true,
+      };
+    });
+  },
+
+  // ── renameTag ─────────────────────────────────────────────────────────────
+  renameTag: (oldLabel, newLabel) => {
+    const trimmed = newLabel.trim();
+    if (!trimmed) return;
+    const key = oldLabel.toLowerCase();
+    set((s) => {
+      const updateNodes = (nodes: typeof s.allNodes) =>
+        nodes.map((n) => {
+          if (!n.tags?.some((t) => t.label.toLowerCase() === key)) return n;
+          return { ...n, tags: n.tags.map((t) => t.label.toLowerCase() === key ? { ...t, label: trimmed } : t) };
+        });
+      const tagRegistry = s.tagRegistry.map((t) =>
+        t.label.toLowerCase() === key ? { ...t, label: trimmed } : t
+      );
+      return {
+        allNodes: updateNodes(s.allNodes),
+        visibleNodes: updateNodes(s.visibleNodes),
+        tagRegistry,
+        designDirty: true,
+      };
+    });
+  },
+
+  // ── addTagToRegistry ──────────────────────────────────────────────────────
+  addTagToRegistry: (tag) => {
+    set((s) => {
+      const key = tag.label.toLowerCase();
+      if (s.tagRegistry.some((t) => t.label.toLowerCase() === key)) return s;
+      // Also skip if already on any node — it's already in the "global" pool
+      const onNode = s.allNodes.some((n) =>
+        n.tags?.some((t) => t.label.toLowerCase() === key)
+      );
+      if (onNode) return s;
+      return { tagRegistry: [...s.tagRegistry, tag] };
+    });
+  },
+
+  // ── removeTagFromRegistry ─────────────────────────────────────────────────
+  removeTagFromRegistry: (label) => {
+    const key = label.toLowerCase();
+    set((s) => ({
+      tagRegistry: s.tagRegistry.filter((t) => t.label.toLowerCase() !== key),
+    }));
+  },
+
+  // ── addOwnerToRegistry ────────────────────────────────────────────────────
+  addOwnerToRegistry: (name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    set((s) => {
+      // No-op if already on a node or already in registry
+      if (s.allNodes.some((n) => n.owner.toLowerCase() === key)) return s;
+      if (s.ownerRegistry.some((o) => o.toLowerCase() === key)) return s;
+      return { ownerRegistry: [...s.ownerRegistry, trimmed] };
+    });
+  },
+
+  // ── removeOwnerFromRegistry ───────────────────────────────────────────────
+  removeOwnerFromRegistry: (name) => {
+    const key = name.toLowerCase();
+    set((s) => ({
+      ownerRegistry: s.ownerRegistry.filter((o) => o.toLowerCase() !== key),
+    }));
   },
 }));

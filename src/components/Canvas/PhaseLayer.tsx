@@ -44,6 +44,8 @@ interface PhaseLayerProps {
   transform?: Transform;
   /** Canvas pixel height — paired with transform to compute the visible SVG window. */
   canvasPixelHeight?: number;
+  /** When true (space-key pan mode), phase drag is suppressed. */
+  spaceHeld?: boolean;
 }
 
 interface BandData {
@@ -74,6 +76,7 @@ export function PhaseLayer({
   renderPart,
   transform,
   canvasPixelHeight,
+  spaceHeld,
 }: PhaseLayerProps) {
   const { saveLayoutToCache, settleAllPhases, reorderPhasesByPosition } = useGraphStore();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -90,6 +93,7 @@ export function PhaseLayer({
   } | null>(null);
 
   function handleHeaderMouseDown(e: React.MouseEvent, phase: GraphPhase) {
+    if (spaceHeld) return; // space pan mode — let the event bubble to the canvas
     e.stopPropagation();
     e.preventDefault();
 
@@ -391,8 +395,8 @@ export function PhaseLayer({
         const badgeX = minX + 14 + BADGE_R;
         const badgeY = bandTop + HEADER_H / 2;
 
-        const isDraggable = designMode;
-        const dragCursor = draggingId === phase.id ? 'grabbing' : isDraggable ? 'grab' : 'pointer';
+        const isDraggable = designMode && !spaceHeld;
+        const dragCursor = spaceHeld ? undefined : (draggingId === phase.id ? 'grabbing' : isDraggable ? 'grab' : 'pointer');
 
         const showFill   = renderPart !== 'headers';
         const showChrome = renderPart !== 'background';

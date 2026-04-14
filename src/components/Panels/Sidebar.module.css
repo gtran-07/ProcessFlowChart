@@ -1,65 +1,342 @@
-.sidebar {
-  width: 220px; flex-shrink: 0;
+/* ── Left panel ──────────────────────────────────────────────────────────── */
+.pane {
+  flex-shrink: 0;
   background: var(--bg2);
   border-right: 1px solid var(--border);
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
+  position: relative;
+  /* width is set inline so we support free resize; transition only for collapse */
   transition: width .2s;
+  min-width: 0;
 }
-.collapsed { width: 0; border-right: none; }
-.header {
-  padding: 12px 14px 8px;
-  font-size: 9px; font-weight: 600;
-  letter-spacing: 1.5px; color: var(--text3);
-  text-transform: uppercase;
+.collapsed { width: 0 !important; border-right: none; }
+
+/* ── Tab bar ─────────────────────────────────────────────────────────────── */
+.tabBar {
+  display: flex;
+  align-items: center;
   border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; gap: 6px;
   flex-shrink: 0;
+  background: var(--bg2);
+  /* prevent line-wrap — pane width accommodates all tabs */
+  white-space: nowrap;
+  overflow: hidden;
 }
-.allBtn, .collapseBtn {
-  background: transparent; border: 1px solid var(--border);
-  border-radius: 3px; color: var(--text3);
-  font-family: var(--font-mono); font-size: 9px;
-  padding: 2px 6px; cursor: pointer;
-  transition: all .12s;
+.tab {
+  flex: 1;
+  padding: 8px 6px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text3);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.9px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color .12s, border-color .12s;
+  white-space: nowrap;
 }
-.allBtn:hover, .collapseBtn:hover { border-color: var(--accent); color: var(--accent); }
-.collapseBtn { margin-left: auto; }
-.filterScroll { overflow-y: auto; flex: 1; padding: 8px 0; }
-.empty { padding: 16px; font-size: 11px; color: var(--text3); text-align: center; }
+.tab:hover { color: var(--text2); }
+.tabActive {
+  color: var(--accent) !important;
+  border-bottom-color: var(--accent);
+}
+/* subtle pulse badge when Inspector tab has content but isn't active */
+.tabPing { color: var(--text2); }
+.tabPing::after {
+  content: '•';
+  color: var(--accent);
+  font-size: 14px;
+  line-height: 0;
+  vertical-align: middle;
+  margin-left: 2px;
+  animation: tabDot 1.4s ease-in-out infinite;
+}
+@keyframes tabDot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.25; }
+}
+
+.collapseBtn {
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border);
+  color: var(--text3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 8px 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color .12s;
+}
+.collapseBtn:hover { color: var(--accent); }
+
+/* ── Tab body ────────────────────────────────────────────────────────────── */
+.body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* ── Owners tab content ──────────────────────────────────────────────────── */
+.tabContent { padding: 8px 0; }
 .filterItem {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 14px; cursor: pointer;
-  transition: background .1s; font-size: 11px; color: var(--text2);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: background .1s;
+  font-size: 11px;
+  color: var(--text2);
 }
 .filterItem:hover { background: var(--surface); }
 .checkBox {
   width: 13px; height: 13px;
-  border: 1.5px solid var(--border2); border-radius: 3px;
-  flex-shrink: 0; transition: all .15s;
+  border: 1.5px solid var(--border2);
+  border-radius: 3px;
+  flex-shrink: 0;
+  transition: all .15s;
 }
 .checked .checkBox {
-  background: var(--accent); border-color: var(--accent);
+  background: var(--accent);
+  border-color: var(--accent);
   position: relative;
 }
 .checked .checkBox::after {
-  content: '✓'; position: absolute;
+  content: '✓';
+  position: absolute;
   top: -2px; left: 1px;
   font-size: 10px; color: #fff; font-weight: 700;
 }
-.ownerDot {
-  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
-}
+.ownerDot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .checkLabel { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .checkLabelBold { font-weight: 600; color: var(--text); }
 .filterCount { font-size: 9px; color: var(--text3); margin-left: auto; }
 .sep { height: 1px; background: var(--border); margin: 4px 12px; }
+
+/* ── Inspector tab content ───────────────────────────────────────────────── */
+.inspectorWrap { padding: 14px; }
+
+/* ── Tags tab content ────────────────────────────────────────────────────── */
+.sectionLabel {
+  font-size: 9px; font-weight: 600;
+  letter-spacing: 1.3px; color: var(--text3);
+  text-transform: uppercase;
+  padding: 10px 14px 6px;
+}
+.emptyHint { font-size: 11px; color: var(--text3); padding: 4px 14px 8px; }
+
+.tagRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 14px;
+}
+.tagSwatch {
+  width: 14px; height: 14px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  border: 1px solid rgba(255,255,255,.12);
+}
+.tagLabel {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tagColorInput {
+  width: 24px; height: 24px;
+  border: none; border-radius: 4px;
+  padding: 0; cursor: pointer;
+  flex-shrink: 0;
+  background: none;
+}
+.tagLabelInput {
+  flex: 1;
+  background: var(--bg3);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 7px;
+  outline: none;
+}
+/* Inline name input inside a filterItem row — narrower to leave room for action btns */
+.ownerNameInput {
+  min-width: 0;
+}
+.tagActionBtn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text3);
+  font-size: 10px;
+  padding: 2px 6px;
+  cursor: pointer;
+  transition: all .12s;
+  flex-shrink: 0;
+}
+.tagActionBtn:hover { border-color: var(--accent); color: var(--accent); }
+
+.tagRemoveError {
+  font-size: 10px;
+  color: #e05555;
+  padding: 0 14px 4px 34px;
+  line-height: 1.4;
+}
+
+.addRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px 4px;
+}
+.addInput {
+  flex: 1;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 4px 8px;
+  outline: none;
+  transition: border-color .12s;
+}
+.addInput:focus { border-color: var(--accent); }
+.addBtn {
+  background: var(--accent);
+  border: none; border-radius: 4px;
+  color: #fff; font-size: 14px; font-weight: 700;
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: opacity .12s;
+}
+.addBtn:disabled { opacity: 0.35; cursor: default; }
+.addBtn:not(:disabled):hover { opacity: 0.85; }
+
+/* ── Resize handle ───────────────────────────────────────────────────────── */
+.resizeHandle {
+  position: absolute;
+  top: 0; right: 0;
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+  /* subtle visual on hover */
+  transition: background .15s;
+}
+.resizeHandle:hover { background: rgba(79,158,255,.25); }
+
+/* ── Peek button (collapsed state) ──────────────────────────────────────── */
 .peekBtn {
-  position: absolute; top: 14px; left: 14px; z-index: 120;
-  width: 32px; height: 32px; border-radius: 8px;
-  background: rgba(14,17,23,.92); border: 1px solid var(--border);
-  color: var(--text2); cursor: pointer;
+  position: absolute;
+  top: 14px; left: 14px;
+  z-index: 120;
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  background: rgba(14,17,23,.92);
+  border: 1px solid var(--border);
+  color: var(--text2);
+  cursor: pointer;
   box-shadow: 0 10px 30px rgba(0,0,0,.45);
   transition: all .15s;
+  font-size: 14px;
 }
 .peekBtn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Floating hint (collapsed + selection) ───────────────────────────────── */
+.collapsedHint {
+  position: absolute;
+  top: 56px; left: 14px;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(14,17,23,.92);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 8px 14px 8px 10px;
+  font-size: 11px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  cursor: pointer;
+  max-width: 240px;
+  user-select: none;
+  /* base state — transition fires on exit (when animation is stripped by hidden class) */
+  opacity: 1;
+  transform: translateX(0) scale(1);
+  transition: opacity .28s cubic-bezier(.4,0,.2,1), transform .28s cubic-bezier(.4,0,.2,1);
+  /* entry slide-in, then looping glow */
+  animation: hintEnter .35s cubic-bezier(.22,1,.36,1), hintGlow 2.4s ease-in-out .35s infinite;
+}
+.collapsedHint:hover {
+  background: rgba(79,158,255,.12);
+}
+/* Hidden state: strips animation so CSS transition takes over for the exit slide */
+.collapsedHintHidden {
+  opacity: 0;
+  transform: translateX(-8px) scale(0.98);
+  pointer-events: none;
+  animation: none;
+}
+.hintIcon {
+  font-size: 13px;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 1px;
+}
+.hintBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  animation: hintContentSwitch .3s cubic-bezier(.22,1,.36,1);
+}
+@keyframes hintContentSwitch {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)   scale(1); }
+}
+.hintName {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hintSub {
+  font-size: 9px;
+  color: var(--text3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hintCta {
+  font-size: 9px;
+  color: var(--accent);
+  opacity: 0.7;
+  margin-top: 3px;
+  white-space: nowrap;
+}
+.collapsedHint:hover .hintCta { opacity: 1; }
+
+@keyframes hintEnter {
+  from { opacity: 0; transform: translateX(-14px) scale(0.95); }
+  to   { opacity: 1; transform: translateX(0)     scale(1); }
+}
+@keyframes hintGlow {
+  0%   { box-shadow: 0 0  6px 0px rgba(79,158,255,.45), 0 4px 16px rgba(0,0,0,.5); }
+  50%  { box-shadow: 0 0 16px 4px rgba(79,158,255,.70), 0 4px 20px rgba(0,0,0,.5); }
+  100% { box-shadow: 0 0  6px 0px rgba(79,158,255,.45), 0 4px 16px rgba(0,0,0,.5); }
+}

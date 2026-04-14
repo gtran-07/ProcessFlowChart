@@ -28,7 +28,7 @@ const TAG_PALETTE: { color: string; label: string }[] = [
 type ModalMode = 'add' | 'edit';
 
 export function NodeEditModal() {
-  const { allNodes, addNode, updateNode, deleteNode, ownerColors } = useGraphStore();
+  const { allNodes, addNode, updateNode, deleteNode, ownerColors, recolorTag, renameTag, tagRegistry, ownerRegistry } = useGraphStore();
 
   // ── Local modal state ─────────────────────────────────────────────────
   const [isOpen, setIsOpen] = useState(false);
@@ -50,13 +50,18 @@ export function NodeEditModal() {
   const [tagSearch, setTagSearch] = useState('');
   const [newTagColor, setNewTagColor] = useState(TAG_PALETTE[0].color);
 
+  // Inline tag edit state (edit existing tag in dropdown)
+  const [editingTagLabel, setEditingTagLabel] = useState<string | null>(null);
+  const [editTagText, setEditTagText] = useState('');
+  const [editTagColor, setEditTagColor] = useState(TAG_PALETTE[0].color);
+
   const nameInputRef = useRef<HTMLInputElement>(null);
 
-  // Unique owners for the datalist autocomplete
-  const existingOwners = [...new Set(allNodes.map((n) => n.owner))];
+  // Unique owners: from nodes + pre-registered owners, deduped
+  const existingOwners = [...new Set([...allNodes.map((n) => n.owner), ...ownerRegistry])];
 
-  // Global tag registry — unique by label (case-insensitive), first-seen color wins.
-  // Also includes any tags currently in fieldTags so newly created ones appear immediately.
+  // Global tag pool — unique by label (case-insensitive), first-seen color wins.
+  // Sources: node tags → session tagRegistry → current fieldTags (for newly created ones).
   const existingTags: NodeTag[] = (() => {
     const seen = new Map<string, NodeTag>();
     for (const n of allNodes) {
@@ -64,6 +69,10 @@ export function NodeEditModal() {
         const key = t.label.toLowerCase();
         if (!seen.has(key)) seen.set(key, t);
       }
+    }
+    for (const t of tagRegistry) {
+      const key = t.label.toLowerCase();
+      if (!seen.has(key)) seen.set(key, t);
     }
     for (const t of fieldTags) {
       const key = t.label.toLowerCase();
@@ -87,6 +96,7 @@ export function NodeEditModal() {
       setTagSearch('');
       setTagDropOpen(false);
       setNewTagColor(TAG_PALETTE[0].color);
+      setEditingTagLabel(null);
       setIsOpen(true);
     }
 
@@ -104,6 +114,7 @@ export function NodeEditModal() {
       setTagSearch('');
       setTagDropOpen(false);
       setNewTagColor(TAG_PALETTE[0].color);
+      setEditingTagLabel(null);
       setIsOpen(true);
     }
 
@@ -358,7 +369,7 @@ export function NodeEditModal() {
                 onChange={(e) => { setTagSearch(e.target.value); setTagDropOpen(true); }}
                 onFocus={() => setTagDropOpen(true)}
                 onBlur={() => setTimeout(() => setTagDropOpen(false), 160)}
-                placeholder={existingTags.length > 0 ? 'Add or create a tag…' : 'Type a tag name to create…'}
+                placeholder={existingTags.length > 0 ? 'Search or type a name to create a new tag…' : 'Type a name to create a new tag…'}
                 maxLength={60}
                 autoComplete="off"
                 style={{ paddingRight: 28 }}
@@ -381,27 +392,128 @@ export function NodeEditModal() {
                   borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,.5)',
                   maxHeight: 220, overflowY: 'auto', marginTop: 2,
                 }}>
-                  {/* Existing tags not yet assigned to this node */}
+                  {/* All tags — assigned ones show a checkmark and toggle off on click */}
                   {existingTags
-                    .filter((t) => !fieldTags.some((f) => f.label.toLowerCase() === t.label.toLowerCase()))
                     .filter((t) => !tagSearch || t.label.toLowerCase().includes(tagSearch.toLowerCase()))
-                    .map((tag) => (
+                    .map((tag) => {
+                      const isAssigned = fieldTags.some((f) => f.label.toLowerCase() === tag.label.toLowerCase());
+                      const isEditingThis = editingTagLabel === tag.label;
+
+                      if (isEditingThis) {
+                        return (
+                          <div key={tag.label} style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--surface2)' }}>
+                            {/* Color swatches */}
+                            <div style={{ display: 'flex', gap: 5, marginBottom: 6 }}>
+                              {TAG_PALETTE.map((p) => (
+                                <button key={p.color} type="button" title={p.label}
+                                  onMouseDown={(e) => { e.preventDefault(); setEditTagColor(p.color); }}
+                                  style={{
+                                    width: 16, height: 16, borderRadius: '50%', border: 'none',
+                                    background: p.color, cursor: 'pointer', flexShrink: 0,
+                                    outline: editTagColor === p.color ? '2px solid #fff' : 'none',
+                                    outlineOffset: 1,
+                                    boxShadow: editTagColor === p.color ? `0 0 0 3px ${p.color}55` : 'none',
+                                  }}
+                                />
+                              ))}
+                            </div>
+                            {/* Text input + Apply/Cancel */}
+                            <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                              <input
+                                value={editTagText}
+                                onChange={(e) => setEditTagText(e.target.value)}
+                                maxLength={60}
+                                autoFocus
+                                style={{
+                                  flex: 1, minWidth: 0,
+                                  background: 'var(--bg3)', border: '1px solid var(--accent)',
+                                  borderRadius: 4, color: 'var(--text)',
+                                  fontFamily: 'var(--font-mono)', fontSize: 11, padding: '3px 7px', outline: 'none',
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    const newText = editTagText.trim();
+                                    if (newText && newText !== tag.label) renameTag(tag.label, newText);
+                                    if (editTagColor !== tag.color) recolorTag(newText || tag.label, editTagColor);
+                                    // Update in fieldTags if already assigned
+                                    setFieldTags((prev) => prev.map((t) =>
+                                      t.label.toLowerCase() === tag.label.toLowerCase()
+                                        ? { label: newText || tag.label, color: editTagColor }
+                                        : t
+                                    ));
+                                    setEditingTagLabel(null);
+                                  }
+                                  if (e.key === 'Escape') setEditingTagLabel(null);
+                                  e.stopPropagation();
+                                }}
+                                onMouseDown={(e) => e.stopPropagation()}
+                              />
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  const newText = editTagText.trim();
+                                  if (newText && newText !== tag.label) renameTag(tag.label, newText);
+                                  if (editTagColor !== tag.color) recolorTag(newText || tag.label, editTagColor);
+                                  setFieldTags((prev) => prev.map((t) =>
+                                    t.label.toLowerCase() === tag.label.toLowerCase()
+                                      ? { label: newText || tag.label, color: editTagColor }
+                                      : t
+                                  ));
+                                  setEditingTagLabel(null);
+                                }}
+                                style={{
+                                  background: 'rgba(167,139,250,.2)', border: '1px solid var(--design)',
+                                  borderRadius: 4, color: 'var(--design)', fontSize: 10,
+                                  fontFamily: 'var(--font-mono)', fontWeight: 700,
+                                  padding: '3px 8px', cursor: 'pointer', flexShrink: 0,
+                                }}
+                              >Apply</button>
+                              <button
+                                type="button"
+                                onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setEditingTagLabel(null); }}
+                                style={{
+                                  background: 'transparent', border: '1px solid var(--border2)',
+                                  borderRadius: 4, color: 'var(--text3)', fontSize: 11,
+                                  padding: '3px 7px', cursor: 'pointer', flexShrink: 0,
+                                }}
+                              >✕</button>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
                       <div
                         key={tag.label}
                         onMouseDown={() => {
-                          setFieldTags((prev) => [...prev, tag]);
-                          setTagSearch('');
-                          setTagDropOpen(false);
+                          if (isAssigned) {
+                            setFieldTags((prev) => prev.filter((f) => f.label.toLowerCase() !== tag.label.toLowerCase()));
+                          } else {
+                            setFieldTags((prev) => [...prev, tag]);
+                            setTagSearch('');
+                            setTagDropOpen(false);
+                          }
                         }}
+                        className={styles.tagRow}
                         style={{
                           padding: '8px 12px', cursor: 'pointer', fontSize: 11,
                           display: 'flex', alignItems: 'center', gap: 8,
                           borderBottom: '1px solid var(--border)',
-                          color: 'var(--text)',
+                          color: 'var(--text)', position: 'relative',
+                          background: isAssigned ? 'var(--surface2)' : undefined,
                         }}
                         onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface2)')}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = '')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = isAssigned ? 'var(--surface2)' : '')}
                       >
+                        {/* Checkmark for assigned tags */}
+                        <span style={{
+                          width: 14, flexShrink: 0, textAlign: 'center',
+                          color: 'var(--accent)', fontSize: 11, fontWeight: 700,
+                          visibility: isAssigned ? 'visible' : 'hidden',
+                        }}>✓</span>
                         <span style={{
                           display: 'inline-block', background: tag.color,
                           color: '#fff', borderRadius: 4,
@@ -409,8 +521,22 @@ export function NodeEditModal() {
                           fontFamily: 'var(--font-mono)', textTransform: 'uppercase',
                           letterSpacing: '0.04em', flexShrink: 0,
                         }}>{tag.label}</span>
+                        {/* Pencil edit button — appears on row hover */}
+                        <button
+                          type="button"
+                          className={styles.tagEditBtn}
+                          title="Edit tag name and color globally"
+                          onMouseDown={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            setEditingTagLabel(tag.label);
+                            setEditTagText(tag.label);
+                            setEditTagColor(tag.color);
+                          }}
+                        >✎</button>
                       </div>
-                    ))}
+                    );
+                  })}
 
                   {/* "Create new tag" row — shown when typed text is new */}
                   {tagSearch.trim() &&
@@ -464,10 +590,9 @@ export function NodeEditModal() {
                   )}
 
                   {/* Empty state */}
-                  {existingTags.filter((t) => !fieldTags.some((f) => f.label.toLowerCase() === t.label.toLowerCase())).length === 0 &&
-                    !tagSearch.trim() && (
+                  {existingTags.length === 0 && !tagSearch.trim() && (
                     <div style={{ padding: '8px 12px', fontSize: 11, color: 'var(--text3)' }}>
-                      No tags yet — type a name to create one
+                      No tags yet — type a name above to create one
                     </div>
                   )}
                 </div>

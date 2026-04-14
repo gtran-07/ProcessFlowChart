@@ -340,20 +340,14 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
       {/* Left accent bar */}
       <rect x={0} y={0} width={4} height={NODE_H} rx={3} fill={color} />
 
-      {/* Node ID */}
-      <text x={14} y={20} fontFamily="var(--font-mono)" fontSize={9}
-        fill="var(--text3)" style={{ pointerEvents: 'none' }}>
-        #{node.id}
-      </text>
-
       {/* Node name */}
-      <text x={14} y={38} fontFamily="var(--font-mono)" fontSize={11.5} fontWeight={600}
+      <text x={14} y={33} fontFamily="var(--font-mono)" fontSize={11.5} fontWeight={600}
         fill="var(--text)" style={{ pointerEvents: 'none' }}>
         {truncateText(node.name, 20)}
       </text>
 
       {/* Owner */}
-      <text x={14} y={56} fontFamily="var(--font-mono)" fontSize={9}
+      <text x={14} y={50} fontFamily="var(--font-mono)" fontSize={9}
         fill={color} style={{ pointerEvents: 'none' }}>
         {truncateText(node.owner, 24)}
       </text>

@@ -1,142 +1,638 @@
 /**
- * components/Panels/Sidebar.tsx — Left pane with owner filter checkboxes.
+ * components/Panels/Sidebar.tsx — Tabbed left panel.
  *
- * Lists all unique owners in the graph with colored dots and node counts.
- * Checking/unchecking an owner shows/hides all their nodes on the canvas.
- * Includes a "Select All" toggle and collapses to a floating peek button.
+ * Tabs:
+ *   Owners    — owner filter checkboxes (original sidebar content)
+ *   Inspector — selected node / group / phase details
+ *   Tags      — global tag & owner colour management
  *
- * Auto-opens when the first JSON file is loaded.
- * Responds to the 'flowgraph:toggle-sidebar' custom event dispatched by the Header.
+ * Behaviour:
+ *   • Auto-expands (Owners tab) when first file is loaded.
+ *   • When open + a node/group/phase is selected → auto-switches to Inspector tab.
+ *   • When collapsed + a node/group/phase is selected → shows a floating glowing hint.
+ *   • Right-edge drag handle lets the user resize the pane (min 220px, max 560px).
+ *   • flowgraph:toggle-sidebar  → toggle collapsed
+ *   • flowgraph:toggle-inspector → ensure open + switch to Inspector tab
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useGraphStore } from '../../store/graphStore';
+import { InspectorContent } from './Inspector';
 import styles from './Sidebar.module.css';
+import type { NodeTag } from '../../types/graph';
 
-export function Sidebar() {
-  const { allNodes, activeOwners, ownerColors, toggleOwner, toggleAllOwners, fitToScreen } =
-    useGraphStore();
+type LeftTab = 'owners' | 'inspector' | 'tags';
 
-  const [collapsed, setCollapsed] = useState(true);
+const MIN_WIDTH = 220;
+const MAX_WIDTH = 560;
+const DEFAULT_WIDTH = 280;
 
-  // ── Auto-expand when first data is loaded ─────────────────────────────
-  // We track whether we've already auto-opened so repeated loads (or reactive
-  // re-renders) don't fight the user if they manually collapsed the sidebar.
-  const hasAutoOpened = useRef(false);
-  useEffect(() => {
-    if (allNodes.length > 0 && !hasAutoOpened.current) {
-      hasAutoOpened.current = true;
-      setCollapsed(false);
+// ─── Tags panel ──────────────────────────────────────────────────────────────
+
+function TagsPanel() {
+  const {
+    allNodes, tagRegistry, designMode,
+    addTagToRegistry, removeTagFromRegistry, recolorTag, renameTag,
+  } = useGraphStore();
+
+  // Collect all unique tags across nodes + registry
+  const tagMap = new Map<string, string>(); // label → color (latest wins)
+  tagRegistry.forEach((t) => tagMap.set(t.label, t.color));
+  allNodes.forEach((n) => n.tags?.forEach((t) => tagMap.set(t.label, t.color)));
+  const allTags: NodeTag[] = Array.from(tagMap.entries()).map(([label, color]) => ({ label, color }));
+
+  // Count how many nodes use each tag
+  const tagCounts = new Map<string, number>();
+  allNodes.forEach((n) => n.tags?.forEach((t) => tagCounts.set(t.label, (tagCounts.get(t.label) ?? 0) + 1)));
+
+  // ── new tag form ──
+  const [newTagLabel, setNewTagLabel] = useState('');
+  const [newTagColor, setNewTagColor] = useState('#4f9eff');
+
+  // ── inline edit ──
+  const [editingTag, setEditingTag] = useState<string | null>(null);
+  const [editLabel, setEditLabel] = useState('');
+  const [editColor, setEditColor] = useState('');
+
+  // ── remove error ──
+  const [removeError, setRemoveError] = useState<string | null>(null);
+
+  function handleAddTag() {
+    const label = newTagLabel.trim();
+    if (!label) return;
+    addTagToRegistry({ label, color: newTagColor });
+    setNewTagLabel('');
+    setNewTagColor('#4f9eff');
+  }
+
+  function startEditTag(tag: NodeTag) {
+    setEditingTag(tag.label);
+    setEditLabel(tag.label);
+    setEditColor(tag.color);
+  }
+
+  function handleRemoveTag(label: string) {
+    const inUse = allNodes.some((n) => n.tags?.some((t) => t.label === label));
+    if (inUse) {
+      setRemoveError(label);
+      return;
     }
-    // Reset the flag when data is cleared so the next load auto-opens again.
-    if (allNodes.length === 0) hasAutoOpened.current = false;
-  }, [allNodes.length]);
+    setRemoveError(null);
+    removeTagFromRegistry(label);
+  }
 
-  // ── Listen for the header's ☰ toggle button ───────────────────────────
-  useEffect(() => {
-    function handleToggle() {
-      setCollapsed((c) => !c);
-    }
-    document.addEventListener('flowgraph:toggle-sidebar', handleToggle);
-    return () => document.removeEventListener('flowgraph:toggle-sidebar', handleToggle);
-  }, []);
+  function commitEditTag(oldLabel: string) {
+    const newLabelTrimmed = editLabel.trim();
+    if (newLabelTrimmed && newLabelTrimmed !== oldLabel) renameTag(oldLabel, newLabelTrimmed);
+    if (editColor !== tagMap.get(oldLabel)) recolorTag(newLabelTrimmed || oldLabel, editColor);
+    setEditingTag(null);
+  }
 
-  // ── Derive ordered unique owner list ──────────────────────────────────
-  const owners: string[] = [];
-  allNodes.forEach((node) => {
-    if (!owners.includes(node.owner)) owners.push(node.owner);
-  });
+  return (
+    <div className={styles.tabContent}>
+      {/* ── Tags section ─────────────────────────────────────── */}
+      <div className={styles.sectionLabel}>Tags</div>
+
+      {allTags.length === 0 && (
+        <div className={styles.emptyHint}>
+          {designMode ? 'No tags yet. Add one below.' : 'No tags defined.'}
+        </div>
+      )}
+
+      {allTags.map((tag) => (
+        designMode && editingTag === tag.label ? (
+          <div key={tag.label} className={styles.tagRow}>
+            <input
+              className={styles.tagColorInput}
+              type="color"
+              value={editColor}
+              onChange={(e) => setEditColor(e.target.value)}
+              title="Tag color"
+            />
+            <input
+              className={styles.tagLabelInput}
+              value={editLabel}
+              onChange={(e) => setEditLabel(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitEditTag(tag.label);
+                if (e.key === 'Escape') setEditingTag(null);
+              }}
+              autoFocus
+            />
+            <button className={styles.tagActionBtn} onClick={() => commitEditTag(tag.label)} title="Save">✓</button>
+            <button className={styles.tagActionBtn} onClick={() => setEditingTag(null)} title="Cancel">✕</button>
+          </div>
+        ) : (
+          <React.Fragment key={tag.label}>
+            <div className={styles.tagRow}>
+              <span className={styles.tagSwatch} style={{ background: tag.color }} />
+              <span className={styles.tagLabel}>{tag.label}</span>
+              {designMode && (
+                <>
+                  <button className={styles.tagActionBtn} onClick={() => { setRemoveError(null); startEditTag(tag); }} title="Edit tag">✎</button>
+                  <button className={styles.tagActionBtn} onClick={() => handleRemoveTag(tag.label)} title="Remove from registry">✕</button>
+                </>
+              )}
+              <span className={styles.filterCount}>{tagCounts.get(tag.label) ?? 0}</span>
+            </div>
+            {removeError === tag.label && (
+              <div className={styles.tagRemoveError}>
+                Tag is in use — remove it from all nodes first.
+              </div>
+            )}
+          </React.Fragment>
+        )
+      ))}
+
+      {/* Add new tag — design mode only */}
+      {designMode && (
+        <div className={styles.addRow}>
+          <input
+            className={styles.tagColorInput}
+            type="color"
+            value={newTagColor}
+            onChange={(e) => setNewTagColor(e.target.value)}
+            title="Pick tag color"
+          />
+          <input
+            className={styles.addInput}
+            placeholder="New tag label…"
+            value={newTagLabel}
+            onChange={(e) => setNewTagLabel(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleAddTag(); }}
+          />
+          <button className={styles.addBtn} onClick={handleAddTag} title="Add tag" disabled={!newTagLabel.trim()}>+</button>
+        </div>
+      )}
+
+    </div>
+  );
+}
+
+// ─── Owners panel ────────────────────────────────────────────────────────────
+
+function OwnersPanel() {
+  const {
+    allNodes, activeOwners, ownerColors, toggleOwner, toggleAllOwners, fitToScreen,
+    designMode, ownerRegistry, renameOwner, setOwnerColor, addOwnerToRegistry, removeOwnerFromRegistry,
+  } = useGraphStore();
+
+  // Combined owner list: nodes + registry
+  const ownerSet = new Set<string>(ownerRegistry);
+  allNodes.forEach((n) => { if (n.owner) ownerSet.add(n.owner); });
+  const owners = Array.from(ownerSet).filter(Boolean);
 
   const allActive = owners.length > 0 && owners.every((o) => activeOwners.has(o));
 
-  /**
-   * handleToggleOwner — toggles one owner then fits the viewport so newly
-   * visible nodes are not stranded off-screen.
-   */
+  // Inline edit state
+  const [editingOwner, setEditingOwner] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editColor, setEditColor] = useState('');
+
+  // Add owner form
+  const [newOwnerName, setNewOwnerName] = useState('');
+  const [newOwnerColor, setNewOwnerColor] = useState('#4f9eff');
+
+  // Remove error
+  const [removeError, setRemoveError] = useState<string | null>(null);
+
   function handleToggleOwner(owner: string) {
     toggleOwner(owner);
-    // Fit after a microtask so the store update (and React re-render) has
-    // settled before we read the canvas dimensions.
     setTimeout(() => fitToScreen(), 60);
   }
 
-  /**
-   * handleToggleAll — same pattern for the Select All control.
-   */
   function handleToggleAll() {
     toggleAllOwners();
     setTimeout(() => fitToScreen(), 60);
   }
 
+  function startEdit(owner: string) {
+    setEditingOwner(owner);
+    setEditName(owner);
+    setEditColor(ownerColors[owner] ?? '#4f9eff');
+  }
+
+  function commitEdit(oldName: string) {
+    const trimmed = editName.trim();
+    const currentColor = ownerColors[oldName] ?? '#4f9eff';
+    if (editColor !== currentColor) setOwnerColor(oldName, editColor);
+    if (trimmed && trimmed !== oldName) renameOwner(oldName, trimmed);
+    setEditingOwner(null);
+  }
+
+  function handleAddOwner() {
+    const name = newOwnerName.trim();
+    if (!name) return;
+    addOwnerToRegistry(name);
+    setOwnerColor(name, newOwnerColor);
+    setNewOwnerName('');
+    setNewOwnerColor('#4f9eff');
+  }
+
+  function handleRemoveOwner(name: string) {
+    const inUse = allNodes.some((n) => n.owner === name);
+    if (inUse) {
+      setRemoveError(name);
+      return;
+    }
+    setRemoveError(null);
+    removeOwnerFromRegistry(name);
+  }
+
+  return (
+    <div className={styles.tabContent}>
+      {/* Select All row */}
+      {owners.length > 0 && (
+        <>
+          <div
+            className={`${styles.filterItem} ${allActive ? styles.checked : ''}`}
+            onClick={handleToggleAll}
+          >
+            <div className={styles.checkBox} />
+            <span className={`${styles.checkLabel} ${styles.checkLabelBold}`}>Select All</span>
+            <span className={styles.filterCount}>{owners.length}</span>
+          </div>
+          <div className={styles.sep} />
+        </>
+      )}
+
+      {owners.length === 0 ? (
+        <div className={styles.emptyHint}>
+          {designMode ? 'No owners yet. Add one below.' : 'Load a JSON file to see owners'}
+        </div>
+      ) : (
+        owners.map((owner) => {
+          const count = allNodes.filter((n) => n.owner === owner).length;
+          const isActive = activeOwners.has(owner);
+          const color = ownerColors[owner] ?? '#4f9eff';
+
+          // ── Edit row (design mode, this owner being edited) ──────────────
+          if (designMode && editingOwner === owner) {
+            return (
+              <div key={owner} className={`${styles.filterItem} ${isActive ? styles.checked : ''}`}>
+                <div
+                  className={styles.checkBox}
+                  onClick={(e) => { e.stopPropagation(); handleToggleOwner(owner); }}
+                />
+                <input
+                  className={styles.tagColorInput}
+                  type="color"
+                  value={editColor}
+                  onChange={(e) => setEditColor(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                  title="Owner color"
+                />
+                <input
+                  className={`${styles.tagLabelInput} ${styles.ownerNameInput}`}
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitEdit(owner);
+                    if (e.key === 'Escape') setEditingOwner(null);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  autoFocus
+                />
+                <button
+                  className={styles.tagActionBtn}
+                  onClick={(e) => { e.stopPropagation(); commitEdit(owner); }}
+                  title="Save"
+                >✓</button>
+                <button
+                  className={styles.tagActionBtn}
+                  onClick={(e) => { e.stopPropagation(); setEditingOwner(null); }}
+                  title="Cancel"
+                >✕</button>
+              </div>
+            );
+          }
+
+          // ── Normal row ────────────────────────────────────────────────────
+          return (
+            <React.Fragment key={owner}>
+              <div
+                className={`${styles.filterItem} ${isActive ? styles.checked : ''}`}
+                onClick={() => handleToggleOwner(owner)}
+              >
+                <div className={styles.checkBox} />
+                {designMode ? (
+                  <input
+                    className={styles.tagColorInput}
+                    type="color"
+                    value={color}
+                    onChange={(e) => { setOwnerColor(owner, e.target.value); }}
+                    onClick={(e) => e.stopPropagation()}
+                    title={`Color for ${owner}`}
+                  />
+                ) : (
+                  <span className={styles.ownerDot} style={{ background: color }} />
+                )}
+                <span className={styles.checkLabel}>{owner}</span>
+                {designMode && (
+                  <>
+                    <button
+                      className={styles.tagActionBtn}
+                      onClick={(e) => { e.stopPropagation(); setRemoveError(null); startEdit(owner); }}
+                      title="Rename owner"
+                    >✎</button>
+                    <button
+                      className={styles.tagActionBtn}
+                      onClick={(e) => { e.stopPropagation(); handleRemoveOwner(owner); }}
+                      title="Remove owner"
+                    >✕</button>
+                  </>
+                )}
+                <span className={styles.filterCount}>{count}</span>
+              </div>
+              {removeError === owner && (
+                <div className={styles.tagRemoveError}>
+                  Owner is in use — reassign all nodes first.
+                </div>
+              )}
+            </React.Fragment>
+          );
+        })
+      )}
+
+      {/* Add new owner — design mode only */}
+      {designMode && (
+        <>
+          <div className={styles.sep} style={{ marginTop: 8 }} />
+          <div className={styles.addRow}>
+            <input
+              className={styles.tagColorInput}
+              type="color"
+              value={newOwnerColor}
+              onChange={(e) => setNewOwnerColor(e.target.value)}
+              title="New owner color"
+            />
+            <input
+              className={styles.addInput}
+              placeholder="New owner name…"
+              value={newOwnerName}
+              onChange={(e) => setNewOwnerName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAddOwner(); }}
+            />
+            <button
+              className={styles.addBtn}
+              onClick={handleAddOwner}
+              title="Add owner"
+              disabled={!newOwnerName.trim()}
+            >+</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Main LeftPane ────────────────────────────────────────────────────────────
+
+export function Sidebar() {
+  const {
+    allNodes, groups, phases, ownerColors,
+    selectedNodeId, selectedGroupId, selectedPhaseId,
+    multiSelectIds,
+  } = useGraphStore();
+
+  const [collapsed, setCollapsed] = useState(true);
+  const [activeTab, setActiveTab] = useState<LeftTab>('owners');
+  const [paneWidth, setPaneWidth] = useState(DEFAULT_WIDTH);
+  const [showHint, setShowHint] = useState(false);
+
+  const hasAutoOpened = useRef(false);
+  const isResizing = useRef(false);
+  const resizeStartX = useRef(0);
+  const resizeStartW = useRef(0);
+
+  const hasSelection =
+    (!!selectedNodeId || !!selectedGroupId || !!selectedPhaseId) &&
+    multiSelectIds.length <= 1;
+
+  // ── Auto-expand on first data load ───────────────────────────────────────
+  useEffect(() => {
+    if (allNodes.length > 0 && !hasAutoOpened.current) {
+      hasAutoOpened.current = true;
+      setCollapsed(false);
+      setActiveTab('owners');
+    }
+    if (allNodes.length === 0) hasAutoOpened.current = false;
+  }, [allNodes.length]);
+
+  // ── Auto-switch to Inspector tab when a selection is made ────────────────
+  const prevNodeId = useRef<string | null>(null);
+  const prevGroupId = useRef<string | null>(null);
+  const prevPhaseId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (selectedNodeId && selectedNodeId !== prevNodeId.current) {
+      if (!collapsed) {
+        setActiveTab('inspector');
+        setShowHint(false);
+      } else {
+        setShowHint(true);
+      }
+    }
+    prevNodeId.current = selectedNodeId;
+  }, [selectedNodeId, collapsed]);
+
+  useEffect(() => {
+    if (selectedGroupId && selectedGroupId !== prevGroupId.current) {
+      if (!collapsed) {
+        setActiveTab('inspector');
+        setShowHint(false);
+      } else {
+        setShowHint(true);
+      }
+    }
+    prevGroupId.current = selectedGroupId;
+  }, [selectedGroupId, collapsed]);
+
+  useEffect(() => {
+    if (selectedPhaseId && selectedPhaseId !== prevPhaseId.current) {
+      if (!collapsed) {
+        setActiveTab('inspector');
+        setShowHint(false);
+      } else {
+        setShowHint(true);
+      }
+    }
+    prevPhaseId.current = selectedPhaseId;
+  }, [selectedPhaseId, collapsed]);
+
+  // Hide hint when pane opens or selection is cleared
+  useEffect(() => {
+    if (!collapsed) setShowHint(false);
+  }, [collapsed]);
+
+  useEffect(() => {
+    if (!hasSelection) setShowHint(false);
+  }, [hasSelection]);
+
+  // ── Custom event listeners ────────────────────────────────────────────────
+  useEffect(() => {
+    function handleToggleSidebar() { setCollapsed((c) => !c); }
+    function handleToggleInspector() {
+      setCollapsed(false);
+      setActiveTab('inspector');
+    }
+    document.addEventListener('flowgraph:toggle-sidebar', handleToggleSidebar);
+    document.addEventListener('flowgraph:toggle-inspector', handleToggleInspector);
+    return () => {
+      document.removeEventListener('flowgraph:toggle-sidebar', handleToggleSidebar);
+      document.removeEventListener('flowgraph:toggle-inspector', handleToggleInspector);
+    };
+  }, []);
+
+  // ── Resize logic ──────────────────────────────────────────────────────────
+  const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    isResizing.current = true;
+    resizeStartX.current = e.clientX;
+    resizeStartW.current = paneWidth;
+    e.preventDefault();
+  }, [paneWidth]);
+
+  useEffect(() => {
+    function onMouseMove(e: MouseEvent) {
+      if (!isResizing.current) return;
+      const delta = e.clientX - resizeStartX.current;
+      const newW = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, resizeStartW.current + delta));
+      setPaneWidth(newW);
+    }
+    function onMouseUp() { isResizing.current = false; }
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+  }, []);
+
+  // ── Open pane and switch to Inspector from hint ───────────────────────────
+  function handleHintClick() {
+    setCollapsed(false);
+    setActiveTab('inspector');
+    setShowHint(false);
+  }
+
+  // ── Derive floating hint content from current selection ───────────────────
+  const hintContent: { name: string; sub: string; color?: string } | null = (() => {
+    if (selectedNodeId) {
+      const node = allNodes.find((n) => n.id === selectedNodeId);
+      if (!node) return null;
+      return {
+        name: node.name,
+        sub: node.owner,
+        color: ownerColors[node.owner],
+      };
+    }
+    if (selectedGroupId) {
+      const group = groups.find((g) => g.id === selectedGroupId);
+      if (!group) return null;
+      return {
+        name: group.name,
+        sub: 'Group',
+      };
+    }
+    if (selectedPhaseId) {
+      const phase = phases.find((p) => p.id === selectedPhaseId);
+      if (!phase) return null;
+      return {
+        name: phase.name,
+        sub: `Phase ${phase.sequence + 1}`,
+        color: phase.color,
+      };
+    }
+    return null;
+  })();
+
   return (
     <>
-      {/* Main sidebar panel */}
-      <div className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`}>
-        <div className={styles.header}>
-          <span>Owners</span>
+      {/* ── Main panel ────────────────────────────────────────────────────── */}
+      <div
+        className={`${styles.pane} ${collapsed ? styles.collapsed : ''}`}
+        style={collapsed ? undefined : { width: paneWidth }}
+      >
+        {/* Tab bar */}
+        <div className={styles.tabBar}>
           <button
-            className={styles.allBtn}
-            onClick={handleToggleAll}
-            title={allActive ? 'Deselect all owners' : 'Select all owners'}
-          >
-            ALL
-          </button>
+            className={`${styles.tab} ${activeTab === 'owners' ? styles.tabActive : ''}`}
+            onClick={() => setActiveTab('owners')}
+            title="Owner filters"
+          >Owners</button>
+          <button
+            className={`${styles.tab} ${activeTab === 'inspector' ? styles.tabActive : ''} ${hasSelection && activeTab !== 'inspector' ? styles.tabPing : ''}`}
+            onClick={() => setActiveTab('inspector')}
+            title="Inspector — selected item details"
+          >Inspector</button>
+          <button
+            className={`${styles.tab} ${activeTab === 'tags' ? styles.tabActive : ''}`}
+            onClick={() => setActiveTab('tags')}
+            title="Tags & owner colour management"
+          >Tags</button>
           <button
             className={styles.collapseBtn}
             onClick={() => setCollapsed(true)}
-            title="Collapse filters"
-          >»</button>
+            title="Collapse panel"
+          >«</button>
         </div>
 
-        <div className={styles.filterScroll}>
-          {owners.length === 0 ? (
-            <div className={styles.empty}>Load a JSON file to see owners</div>
-          ) : (
-            <>
-              {/* Select All row */}
-              <div
-                className={`${styles.filterItem} ${allActive ? styles.checked : ''}`}
-                onClick={handleToggleAll}
-              >
-                <div className={styles.checkBox} />
-                <span className={`${styles.checkLabel} ${styles.checkLabelBold}`}>Select All</span>
-                <span className={styles.filterCount}>{owners.length}</span>
-              </div>
-              <div className={styles.sep} />
-              {/* Individual owner rows */}
-              {owners.map((owner) => {
-                const count = allNodes.filter((n) => n.owner === owner).length;
-                const isActive = activeOwners.has(owner);
-                return (
-                  <div
-                    key={owner}
-                    className={`${styles.filterItem} ${isActive ? styles.checked : ''}`}
-                    onClick={() => handleToggleOwner(owner)}
-                  >
-                    <div className={styles.checkBox} />
-                    <span
-                      className={styles.ownerDot}
-                      style={{ background: ownerColors[owner] ?? '#4f9eff' }}
-                    />
-                    <span className={styles.checkLabel}>{owner}</span>
-                    <span className={styles.filterCount}>{count}</span>
-                  </div>
-                );
-              })}
-            </>
+        {/* Tab content */}
+        <div className={styles.body}>
+          {activeTab === 'owners' && <OwnersPanel />}
+          {activeTab === 'inspector' && (
+            <div className={styles.inspectorWrap}>
+              <InspectorContent />
+            </div>
           )}
+          {activeTab === 'tags' && <TagsPanel />}
         </div>
+
+        {/* Resize handle */}
+        <div
+          className={styles.resizeHandle}
+          onMouseDown={onResizeMouseDown}
+          title="Drag to resize panel"
+        />
       </div>
 
-      {/* Floating peek button — shown when sidebar is collapsed */}
+      {/* ── Collapsed peek button ─────────────────────────────────────────── */}
       {collapsed && (
         <button
           className={styles.peekBtn}
           onClick={() => setCollapsed(false)}
-          title="Show owner filters"
+          title="Show panel"
         >
           ☰
         </button>
+      )}
+
+      {/* ── Floating hint when collapsed + item selected ──────────────────── */}
+      {collapsed && (
+        <div
+          className={`${styles.collapsedHint} ${!showHint ? styles.collapsedHintHidden : ''}`}
+          onClick={handleHintClick}
+          role="button"
+          tabIndex={showHint ? 0 : -1}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleHintClick(); }}
+        >
+          <span
+            className={styles.hintIcon}
+            style={hintContent?.color ? { color: hintContent.color } : undefined}
+          >▣</span>
+          {hintContent ? (
+            <div key={selectedNodeId ?? selectedGroupId ?? selectedPhaseId} className={styles.hintBody}>
+              <span className={styles.hintName}>{hintContent.name}</span>
+              <span className={styles.hintSub}>{hintContent.sub}</span>
+              <span className={styles.hintCta}>↗ Click to open inspector</span>
+            </div>
+          ) : (
+            <div key="empty" className={styles.hintBody}>
+              <span className={styles.hintName}>Item selected</span>
+              <span className={styles.hintCta}>↗ Click to view details</span>
+            </div>
+          )}
+        </div>
       )}
     </>
   );

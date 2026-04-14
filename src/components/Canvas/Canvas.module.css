@@ -47,21 +47,29 @@
   display: flex; align-items: center; justify-content: center;
   color: var(--accent); font-size: 24px;
   margin-bottom: 4px;
+  /* entrance → then idle float + glow */
+  animation:
+    emptyFadeUp     .45s cubic-bezier(.22,.68,0,1.2) both,
+    emptyIconFloat  3.6s ease-in-out            1.2s infinite,
+    emptyIconGlow   3.6s ease-in-out            1.2s infinite;
 }
 .emptyTitle {
   font-family: var(--font-display);
   font-size: 20px; font-weight: 800; color: var(--text);
   letter-spacing: -0.5px;
+  animation: emptyFadeUp .45s cubic-bezier(.22,.68,0,1.2) .10s both;
 }
 .emptySub {
   font-size: 11px; color: var(--text3);
   text-align: center; line-height: 1.7;
   margin-bottom: 8px;
+  animation: emptyFadeUp .45s cubic-bezier(.22,.68,0,1.2) .18s both;
 }
 .emptyActions {
   display: flex; align-items: center; gap: 10px;
   pointer-events: all;
   margin-top: 6px;
+  animation: emptyFadeUp .45s cubic-bezier(.22,.68,0,1.2) .28s both;
 }
 .emptyOr {
   font-size: 10px; color: var(--text3);
@@ -110,6 +118,10 @@
   max-width: 360px; text-align: center; line-height: 1.6;
   margin-top: 10px;
   pointer-events: none;
+  /* entrance then gentle breathing to draw eye to the help text */
+  animation:
+    emptyFadeUp          .45s cubic-bezier(.22,.68,0,1.2) .42s both,
+    emptyFootnotePulse   4.2s ease-in-out                 2.4s infinite;
 }
 .emptyFootnote svg { flex-shrink: 0; margin-top: 2px; }
 
@@ -121,6 +133,7 @@
   margin-top: 18px;
   letter-spacing: 0.02em;
   pointer-events: none;
+  animation: emptyFadeUp .45s cubic-bezier(.22,.68,0,1.2) .52s both;
 }
 
 /* Persistent bottom-left attribution — always visible once canvas is shown */

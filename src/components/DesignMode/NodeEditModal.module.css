@@ -54,3 +54,17 @@
   transition: all .12s;
 }
 .saveBtn:hover { background: rgba(167,139,250,.28); color: #fff; }
+
+/* Tag row in dropdown — pencil edit button */
+.tagRow { position: relative; }
+.tagEditBtn {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  opacity: 0; background: transparent;
+  border: 1px solid var(--border2); border-radius: 4px;
+  color: var(--text3); font-size: 11px;
+  padding: 1px 5px; cursor: pointer;
+  transition: opacity .12s, color .12s, border-color .12s;
+  line-height: 1.4;
+}
+.tagRow:hover .tagEditBtn { opacity: 1; }
+.tagEditBtn:hover { color: var(--accent); border-color: var(--accent); }

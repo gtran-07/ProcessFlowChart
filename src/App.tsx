@@ -12,7 +12,6 @@ import React, { useEffect } from 'react';
 import { Header } from './components/Header/Header';
 import { Sidebar } from './components/Panels/Sidebar';
 import { Canvas } from './components/Canvas/Canvas';
-import { Inspector } from './components/Panels/Inspector';
 import { NodeEditModal } from './components/DesignMode/NodeEditModal';
 import { GroupEditModal } from './components/DesignMode/GroupEditModal';
 import { PhaseEditModal } from './components/DesignMode/PhaseEditModal';
@@ -38,7 +37,6 @@ export default function App() {
       <div className={styles.appBody}>
         <Sidebar />
         <Canvas />
-        <Inspector />
       </div>
 
       {/* Modals — rendered outside the layout flow so they overlay everything */}

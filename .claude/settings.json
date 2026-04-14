@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(grep -n \"HEADER_H\\\\|const HEADER_H\" src/components/Canvas/*.tsx)"
+      "Bash(grep -n \"HEADER_H\\\\|const HEADER_H\" src/components/Canvas/*.tsx)",
+      "Read(//c/Users/gtran/.claude/projects/c--Users-gtran-OneDrive---Brock-Solutions--Inc-Documents-Tool-flowgraph/00d873f3-5efc-4a1d-a863-769e33529c87/tool-results/**)",
+      "Bash(xargs grep:*)"
     ]
   }
 }
