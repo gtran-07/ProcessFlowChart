@@ -25,6 +25,7 @@ import { PhaseLayer } from './PhaseLayer';
 import { PhaseNavigator } from './PhaseNavigator';
 import { PhaseCrowns } from './PhaseCrowns';
 import { LaneCrowns } from './LaneCrowns';
+import { OwnerFocusBar } from './OwnerFocusBar';
 import { PhaseHoverCard } from './PhaseHoverCard';
 import type { CrownBand } from './PhaseCrowns';
 import { NODE_W, LANE_LABEL_W, computePhaseAdjustedPositions } from '../../utils/layout';
@@ -51,6 +52,7 @@ export function Canvas() {
     groups, toggleGroupCollapse, clearMultiSelect,
     phases, focusedPhaseId, selectedPhaseId, setFocusedPhaseId, setSelectedPhaseId,
     collapsedPhaseIds, togglePhaseCollapse, collapseAllPhases, expandAllPhases,
+    focusedOwner, enterOwnerFocus, exitOwnerFocus,
   } = useGraphStore();
 
 
@@ -93,6 +95,46 @@ export function Canvas() {
     });
     return hidden;
   }, [phases, collapsedPhaseIds]);
+
+  // ── Owner focus role sets ────────────────────────────────────────────────
+  // Computed when focusedOwner is set. Used to assign per-node display roles
+  // (owned / upstream / downstream / partial) for opacity and badge rendering.
+  const ownerFocusSets = useMemo(() => {
+    if (!focusedOwner) return null;
+    const ownedIds = new Set(allNodes.filter((n) => n.owner === focusedOwner).map((n) => n.id));
+    const upstreamIds = new Set<string>();
+    allNodes.forEach((n) => {
+      if (n.owner === focusedOwner) {
+        n.dependencies.forEach((dep) => {
+          const d = allNodes.find((x) => x.id === dep);
+          if (d && d.owner !== focusedOwner) upstreamIds.add(dep);
+        });
+      }
+    });
+    const downstreamIds = new Set<string>();
+    allNodes.forEach((n) => {
+      if (n.owner !== focusedOwner && n.dependencies.some((dep) => ownedIds.has(dep))) {
+        downstreamIds.add(n.id);
+      }
+    });
+    const allOwners = new Set(allNodes.map((n) => n.owner).filter(Boolean));
+    const connectedOwners = new Set([focusedOwner]);
+    [...upstreamIds, ...downstreamIds].forEach((id) => {
+      const n = allNodes.find((x) => x.id === id);
+      if (n) connectedOwners.add(n.owner);
+    });
+    const hiddenLaneCount = [...allOwners].filter((o) => !connectedOwners.has(o)).length;
+    return { ownedIds, upstreamIds, downstreamIds, hiddenLaneCount };
+  }, [focusedOwner, allNodes]);
+
+  // Helper: derive the owner focus role for a given node
+  function getOwnerFocusRole(nodeId: string, nodeOwner: string): 'owned' | 'upstream' | 'downstream' | 'partial' | null {
+    if (!ownerFocusSets) return null;
+    if (nodeOwner === focusedOwner) return 'owned';
+    if (ownerFocusSets.upstreamIds.has(nodeId)) return 'upstream';
+    if (ownerFocusSets.downstreamIds.has(nodeId)) return 'downstream';
+    return 'partial';
+  }
 
   // ── Phase-adjusted positions (visual x-shift for collapsed bands, dag only) ─
   // Nodes to the right of a collapsed band shift left to fill freed space.
@@ -492,6 +534,8 @@ export function Canvas() {
         if (connectSourceId) {
           setConnectSource(null);
           setGhostTarget(null);
+        } else if (focusedOwner) {
+          exitOwnerFocus();
         } else if (focusMode) {
           exitFocusMode();
         }
@@ -542,7 +586,7 @@ export function Canvas() {
     }
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [connectSourceId, focusMode, exitFocusMode, setConnectSource,
+  }, [connectSourceId, focusMode, exitFocusMode, focusedOwner, exitOwnerFocus, setConnectSource,
       designMode, selectedNodeId, selectedGroupId, multiSelectIds,
       deleteNode, deleteGroup, allNodes, groups,
       copySelection, pasteClipboard]);
@@ -769,6 +813,8 @@ export function Canvas() {
               laneMetrics={laneMetrics}
               ownerColors={ownerColors}
               viewMode={viewMode}
+              onFocusOwner={enterOwnerFocus}
+              focusedOwner={focusedOwner}
             />
           </g>
 
@@ -800,6 +846,7 @@ export function Canvas() {
                   onToggleCollapse={handleGroupToggle}
                   laneMetrics={laneMetrics}
                   viewMode={viewMode}
+                  laneFocusRole={getOwnerFocusRole(group.id, group.owners[0] ?? '')}
                 />
               );
             })}
@@ -813,6 +860,8 @@ export function Canvas() {
               ownerColors={ownerColors}
               nodes={visibleNodes}
               groups={groups}
+              ownerFocusSets={ownerFocusSets}
+              focusedOwner={focusedOwner}
             />
             {/* Ghost edge shown while drawing a connection in design mode */}
             {designMode && connectSourceId && ghostTarget && (
@@ -831,6 +880,7 @@ export function Canvas() {
                 color={ownerColors[node.owner] ?? '#4f9eff'}
                 screenToSvg={screenToSvg}
                 onFocusRequest={handleFocusRequest}
+                laneFocusRole={getOwnerFocusRole(node.id, node.owner)}
               />
             ))}
           </g>
@@ -856,6 +906,7 @@ export function Canvas() {
                   onToggleCollapse={handleGroupToggle}
                   laneMetrics={laneMetrics}
                   viewMode={viewMode}
+                  laneFocusRole={getOwnerFocusRole(group.id, group.owners[0] ?? '')}
                 />
               );
             })}
@@ -933,6 +984,8 @@ export function Canvas() {
           ownerColors={ownerColors}
           transform={transform}
           canvasHeight={canvasPixelHeight}
+          onFocusOwner={enterOwnerFocus}
+          focusedOwner={focusedOwner}
         />
       )}
 
@@ -949,6 +1002,18 @@ export function Canvas() {
           onToggleCollapse={togglePhaseCollapse}
           onCollapseAll={collapseAllPhases}
           onExpandAll={expandAllPhases}
+        />
+      )}
+
+      {/* Owner Focus Bar — floating status bar when an owner lane is focused */}
+      {hasData && focusedOwner && ownerFocusSets && (
+        <OwnerFocusBar
+          focusedOwner={focusedOwner}
+          ownerColor={ownerColors[focusedOwner] ?? '#4f9eff'}
+          upstreamCount={ownerFocusSets.upstreamIds.size}
+          downstreamCount={ownerFocusSets.downstreamIds.size}
+          hiddenLaneCount={ownerFocusSets.hiddenLaneCount}
+          onExit={exitOwnerFocus}
         />
       )}
 

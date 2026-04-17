@@ -9,7 +9,7 @@
  * What does NOT belong here: any React state, DOM manipulation beyond the download link.
  */
 
-import type { GraphNode, GraphGroup, GraphPhase, GraphMeta, NodeTag, Position, Transform } from '../types/graph';
+import type { GraphNode, GraphGroup, GraphPhase, GraphMeta, NodeTag, Position, Transform, CinemaEngagementMap } from '../types/graph';
 
 const DEFAULT_META: GraphMeta = {
   note: 'This is a FlowGraph chart file. Open it with the FlowGraph app to view and edit the interactive dependency flowchart.',
@@ -61,6 +61,7 @@ export function buildExportPayload(
   tagRegistry?: NodeTag[],
   ownerRegistry?: string[],
   meta?: GraphMeta | null,
+  discoveryEngagement?: CinemaEngagementMap,
 ): object {
   const nodeData = nodes.map((node) => ({
     id: node.id,
@@ -69,13 +70,20 @@ export function buildExportPayload(
     description: node.description,
     dependencies: node.dependencies,
     ...(node.tags && node.tags.length > 0 ? { tags: node.tags } : {}),
+    // Cinema author fields — omit when falsy to keep JSON clean
+    ...(node.cinemaScript ? { cinemaScript: node.cinemaScript } : {}),
+    ...(node.cinemaBottleneck ? { cinemaBottleneck: true } : {}),
+    ...(node.cinemaSkip ? { cinemaSkip: true } : {}),
   }));
+
+  // Groups include cinema fields as-is (object spread preserves them)
 
   const hasLayout = dagLayout || lanesLayout;
   const hasGroups = groups && groups.length > 0;
   const hasPhases = phases && phases.length > 0;
   const hasTagRegistry = tagRegistry && tagRegistry.length > 0;
   const hasOwnerRegistry = ownerRegistry && ownerRegistry.length > 0;
+  const hasEngagement = discoveryEngagement && Object.keys(discoveryEngagement).length > 0;
 
   // Serialize phases: omit groupIds when empty to keep JSON clean for graphs without group membership
   const phasesData = phases?.map((p) => ({
@@ -97,6 +105,7 @@ export function buildExportPayload(
         currentView: currentView ?? 'dag',
         dag: dagLayout ?? null,
         lanes: lanesLayout ?? null,
+        ...(hasEngagement ? { discoveryEngagement } : {}),
       },
     };
   }
@@ -122,8 +131,9 @@ export function exportGraphToJson(
   tagRegistry?: NodeTag[],
   ownerRegistry?: string[],
   meta?: GraphMeta | null,
+  discoveryEngagement?: CinemaEngagementMap,
 ): void {
-  const exportData = buildExportPayload(nodes, currentView, dagLayout, lanesLayout, groups, phases, tagRegistry, ownerRegistry, meta);
+  const exportData = buildExportPayload(nodes, currentView, dagLayout, lanesLayout, groups, phases, tagRegistry, ownerRegistry, meta, discoveryEngagement);
   const jsonString = JSON.stringify(exportData, null, 2);
 
   // Create a downloadable Blob from the JSON string

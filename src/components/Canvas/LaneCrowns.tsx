@@ -17,9 +17,11 @@ interface LaneCrownsProps {
   ownerColors: Record<string, string>;
   transform: Transform;
   canvasHeight: number;
+  onFocusOwner?: (owner: string) => void;
+  focusedOwner?: string | null;
 }
 
-export function LaneCrowns({ nodes, laneMetrics, ownerColors, transform, canvasHeight }: LaneCrownsProps) {
+export function LaneCrowns({ nodes, laneMetrics, ownerColors, transform, canvasHeight, onFocusOwner, focusedOwner }: LaneCrownsProps) {
   if (nodes.length === 0) return null;
 
   // Lane labels sit at x=0 in SVG-space. Once the canvas origin has scrolled past
@@ -56,6 +58,7 @@ export function LaneCrowns({ nodes, laneMetrics, ownerColors, transform, canvasH
     crowns.push(
       <div
         key={owner}
+        title={focusedOwner === owner ? `Exit focus on ${owner}` : `Focus on ${owner} lane`}
         style={{
           position: 'absolute',
           top: clampedTop,
@@ -68,11 +71,14 @@ export function LaneCrowns({ nodes, laneMetrics, ownerColors, transform, canvasH
           gap: 6,
           paddingLeft: 8,
           overflow: 'hidden',
-          pointerEvents: 'none',
+          pointerEvents: 'auto',
+          cursor: 'pointer',
           zIndex: 12,
           boxSizing: 'border-box',
           borderRight: '1px solid var(--border)',
+          outline: focusedOwner === owner ? `2px solid ${color}` : undefined,
         }}
+        onClick={() => onFocusOwner?.(owner)}
       >
         {/* Colored accent bar — mirrors the 3px rect in LaneLayer */}
         <div

@@ -11,9 +11,11 @@ interface LaneLayerProps {
   laneMetrics: Record<string, LaneMetrics>;
   ownerColors: Record<string, string>;
   viewMode: ViewMode;
+  onFocusOwner?: (owner: string) => void;
+  focusedOwner?: string | null;
 }
 
-export function LaneLayer({ nodes, positions, laneMetrics, ownerColors, viewMode }: LaneLayerProps) {
+export function LaneLayer({ nodes, positions, laneMetrics, ownerColors, viewMode, onFocusOwner, focusedOwner }: LaneLayerProps) {
   if (viewMode !== 'lanes' || nodes.length === 0) return null;
   const ownerOrder: string[] = [];
   nodes.forEach((node) => { if (!ownerOrder.includes(node.owner)) ownerOrder.push(node.owner); });
@@ -39,10 +41,21 @@ export function LaneLayer({ nodes, positions, laneMetrics, ownerColors, viewMode
             <rect x={0} y={metrics.y} width={3} height={metrics.height} fill={color} opacity={0.6} />
             <line x1={0} y1={metrics.y + metrics.height} x2={totalWidth} y2={metrics.y + metrics.height}
               stroke="var(--border)" strokeWidth={1} />
-            <text x={16} y={metrics.y + metrics.height / 2 + 4}
-              fontFamily="var(--font-display)" fontSize={11} fontWeight={700} fill={color} opacity={0.8}>
-              {owner}
-            </text>
+            <g
+              style={{ pointerEvents: 'auto', cursor: 'pointer' }}
+              onClick={() => onFocusOwner?.(owner)}
+            >
+              <title>{focusedOwner === owner ? `Exit focus on ${owner}` : `Focus on ${owner} lane`}</title>
+              <rect
+                x={0} y={metrics.y} width={160} height={metrics.height}
+                fill="transparent"
+              />
+              <text x={16} y={metrics.y + metrics.height / 2 + 4}
+                fontFamily="var(--font-display)" fontSize={11} fontWeight={700}
+                fill={color} opacity={focusedOwner === owner ? 1 : 0.8}>
+                {owner}
+              </text>
+            </g>
           </g>
         );
       })}

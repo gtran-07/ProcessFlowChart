@@ -355,3 +355,76 @@ body {
     display: none !important;
   }
 }
+
+/* ─── CINEMA / DISCOVERY CUSTOM PROPERTIES ──────────────────────────────────── */
+:root {
+  --cinema-focus-color: #4f9eff;        /* Vivid blue — spotlit node border */
+  --cinema-visited-color: #22c55e;      /* Soft green — nodes the user has seen */
+  --cinema-danger-color: #ef4444;       /* Red — bottleneck pulse */
+  --cinema-ghost-opacity: 0.08;         /* Barely visible — unrelated nodes */
+  --cinema-lit-opacity: 0.45;           /* Subordinate but present */
+  --cinema-visited-opacity: 0.55;       /* Memory trace */
+  --cinema-focus-opacity: 1;            /* Fully vivid */
+  --cinema-transition: 400ms ease;      /* Shared transition timing */
+}
+
+/* ─── CANVAS NODE STATES DURING CINEMA ──────────────────────────────────────── */
+
+/* All node cards inherit a transition so state changes animate smoothly */
+.discovery-focus,
+.discovery-lit,
+.discovery-ghost,
+.discovery-visited,
+.discovery-danger {
+  transition: opacity var(--cinema-transition), filter var(--cinema-transition);
+}
+
+/* Spotlit node — vivid, glowing blue border, full opacity */
+.discovery-focus .node-main-rect,
+.discovery-focus .group-polygon {
+  stroke: var(--cinema-focus-color) !important;
+  stroke-width: 2.5 !important;
+  filter: drop-shadow(0 0 6px var(--cinema-focus-color));
+}
+.discovery-focus {
+  opacity: var(--cinema-focus-opacity);
+}
+
+/* Supporting nodes — visible but subordinate */
+.discovery-lit {
+  opacity: var(--cinema-lit-opacity);
+}
+
+/* Unrelated nodes — present enough to show the graph exists, not distracting */
+.discovery-ghost {
+  opacity: var(--cinema-ghost-opacity);
+}
+
+/* Previously seen nodes — soft green memory trace */
+.discovery-visited .node-main-rect,
+.discovery-visited .group-polygon {
+  stroke: var(--cinema-visited-color) !important;
+  stroke-width: 1.5 !important;
+}
+.discovery-visited {
+  opacity: var(--cinema-visited-opacity);
+}
+
+/* Bottleneck scenes only — red pulse on the spotlit node */
+.discovery-danger .node-main-rect,
+.discovery-danger .group-polygon {
+  stroke: var(--cinema-danger-color) !important;
+  stroke-width: 2.5 !important;
+  animation: cinema-danger-pulse 1.2s ease-in-out infinite;
+}
+@keyframes cinema-danger-pulse {
+  0%, 100% { filter: drop-shadow(0 0 4px var(--cinema-danger-color)); }
+  50%       { filter: drop-shadow(0 0 12px var(--cinema-danger-color)); }
+}
+
+/* Suppress cinema overlay during print */
+@media print {
+  [data-cinema-overlay] {
+    display: none !important;
+  }
+}

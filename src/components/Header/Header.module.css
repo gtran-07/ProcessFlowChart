@@ -482,6 +482,25 @@
 .btnDesign:hover { border-color: var(--design); color: var(--design); background: rgba(167,139,250,.07); }
 .btnDesignActive { border-color: var(--design) !important; color: var(--design) !important; background: rgba(167,139,250,.13) !important; }
 
+/* Discover / Cinema tour button */
+.btnDiscover {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  color: var(--text2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.btnDiscover:hover { border-color: var(--accent); color: var(--accent); background: rgba(79,158,255,.07); }
+.btnDiscover:disabled { opacity: .35; cursor: not-allowed; pointer-events: none; }
+.btnDiscoverActive { border-color: var(--cinema-focus-color) !important; color: var(--cinema-focus-color) !important; background: rgba(79,158,255,.13) !important; }
+
 /* ─── RESPONSIVE BREAKPOINTS ─────────────────────────────────────────────────
  *
  * Three tiers:
@@ -505,7 +524,7 @@
   .btnLabel { display: none; }
   .statusChip { display: none; }
   /* Shrink padded buttons to icon-only squares */
-  .btnUpload, .btnNew, .btnSaveJson, .btnDesign, .btnLayouts {
+  .btnUpload, .btnNew, .btnSaveJson, .btnDesign, .btnDiscover, .btnLayouts {
     padding: 6px 8px !important;
     gap: 0 !important;
     min-width: 32px;

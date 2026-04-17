@@ -61,6 +61,11 @@
   50%       { opacity: 0.25; }
 }
 
+/* Cinema tab — tinted to signal the active mode */
+.tabCinema { color: var(--cinema-focus-color) !important; opacity: 0.75; }
+.tabCinema:hover { opacity: 1; }
+.tabCinema.tabActive { opacity: 1; border-bottom-color: var(--cinema-focus-color) !important; }
+
 .collapseBtn {
   background: transparent;
   border: none;
@@ -80,6 +85,13 @@
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+}
+/* Cinema tab needs overflow:hidden so the tab content's sticky header + internal
+   scroll work correctly without the outer .body creating a second scroll layer */
+.bodycinema {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ── Owners tab content ──────────────────────────────────────────────────── */
@@ -185,6 +197,30 @@
   flex-shrink: 0;
 }
 .tagActionBtn:hover { border-color: var(--accent); color: var(--accent); }
+
+.focusBtnActive {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(79, 158, 255, 0.12);
+}
+
+/* ── Owner Focus Mode row annotations ───────────────────────────────────── */
+.focusedRow  { background: rgba(79, 158, 255, 0.08); outline: 1px solid rgba(79,158,255,0.35); outline-offset: -1px; }
+.upstreamRow { background: rgba(79, 158, 255, 0.04); }
+.downstreamRow { background: rgba(245, 166, 35, 0.04); }
+.isolatedRow { opacity: 0.35; pointer-events: none; }
+
+.dirBadge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.upBadge   { color: #4f9eff; background: rgba(79,  158, 255, 0.15); }
+.downBadge { color: #f5a623; background: rgba(245, 166,  35, 0.15); }
 
 .tagRemoveError {
   font-size: 10px;
@@ -339,4 +375,20 @@
   0%   { box-shadow: 0 0  6px 0px rgba(79,158,255,.45), 0 4px 16px rgba(0,0,0,.5); }
   50%  { box-shadow: 0 0 16px 4px rgba(79,158,255,.70), 0 4px 20px rgba(0,0,0,.5); }
   100% { box-shadow: 0 0  6px 0px rgba(79,158,255,.45), 0 4px 16px rgba(0,0,0,.5); }
+}
+
+/* ── Cinema floating hint variant ────────────────────────────────────────── */
+.collapsedHintCinema {
+  border-color: var(--cinema-focus-color);
+  color: var(--cinema-focus-color);
+  animation: hintEnter .35s cubic-bezier(.22,1,.36,1), hintGlowCinema 2.4s ease-in-out .35s infinite;
+}
+.collapsedHintCinema:hover {
+  background: rgba(var(--cinema-focus-color-rgb, 255,180,50), .08);
+}
+.collapsedHintCinema .hintCta { color: var(--cinema-focus-color); }
+@keyframes hintGlowCinema {
+  0%   { box-shadow: 0 0  6px 0px rgba(255,180,50,.45), 0 4px 16px rgba(0,0,0,.5); }
+  50%  { box-shadow: 0 0 16px 4px rgba(255,180,50,.70), 0 4px 20px rgba(0,0,0,.5); }
+  100% { box-shadow: 0 0  6px 0px rgba(255,180,50,.45), 0 4px 16px rgba(0,0,0,.5); }
 }

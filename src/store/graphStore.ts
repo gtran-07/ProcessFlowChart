@@ -29,8 +29,11 @@ import type {
   DesignTool,
   LayoutSnapshot,
   FocusSnapshot,
+  OwnerFocusSnapshot,
   LaneMetrics,
   UndoSnapshot,
+  CinemaSequence,
+  CinemaEngagementMap,
 } from '../types/graph';
 import { PHASE_PALETTE } from '../types/graph';
 import {
@@ -151,6 +154,12 @@ export interface GraphStore {
   focusedPhaseId: string | null;
   /** IDs of phases currently collapsed to a narrow strip (transient — not serialized) */
   collapsedPhaseIds: string[];
+
+  // ── Owner Focus Mode ──────────────────────────────────────────────────────
+  /** Owner lane currently spotlit. Null = no focus. */
+  focusedOwner: string | null;
+  /** Snapshot of state captured before entering owner focus — restored on exit. */
+  preLaneFocusSnapshot: OwnerFocusSnapshot | null;
 
   /** Name of the currently-loaded JSON file, or null if no file is loaded */
   currentFileName: string | null;
@@ -282,6 +291,10 @@ export interface GraphStore {
   setSelectedPhaseId: (id: string | null) => void;
   /** Set the focused phase ID (Navigator spotlight) */
   setFocusedPhaseId: (id: string | null) => void;
+  /** Enter owner focus mode for the given owner lane */
+  enterOwnerFocus: (owner: string) => void;
+  /** Exit owner focus mode and restore the pre-focus state */
+  exitOwnerFocus: () => void;
 
   // ── Owner & tag management ─────────────────────────────────────────────────
   /** Override the display color for an owner */
@@ -324,6 +337,40 @@ export interface GraphStore {
    * by buildExportPayload at save time).
    */
   meta: GraphMeta | null;
+
+  // ── Cinema / Discovery ────────────────────────────────────────────────────
+  /** True while the cinema overlay is displayed */
+  discoveryActive: boolean;
+  /** The generated scene sequence; kept after exit for Phase 2 (Reconstruction) */
+  discoverySequence: CinemaSequence | null;
+  /** Index of the currently displayed scene */
+  discoverySceneIndex: number;
+  /** Ordered list of nodeIds that appeared in focus; Phase 2 uses these as blanks */
+  discoveryVisited: string[];
+  /** Normalized engagement score per nodeId — Phase 3 (Heatmap) reads this */
+  discoveryEngagement: CinemaEngagementMap;
+  /** Per-node role during cinema: 'focus'|'lit'|'ghost'|'visited'|'danger'. Empty when cinema is inactive. */
+  discoveryRoleMap: Record<string, string>;
+
+  // ── Cinema actions ─────────────────────────────────────────────────────────
+  /** Start the cinema with the given pre-built sequence */
+  startDiscovery: (sequence: CinemaSequence) => void;
+  /** Exit the cinema, preserving sequence and engagement for Phase 2/3 */
+  exitDiscovery: () => void;
+  /** Overwrite the full role map (called by CinemaOverlay on every scene change) */
+  setDiscoveryRoleMap: (map: Record<string, string>) => void;
+  /** Advance to the next scene */
+  advanceScene: () => void;
+  /** Go back to the previous scene */
+  retreatScene: () => void;
+  /** Record that a node appeared in focus in the current scene */
+  visitNode: (nodeId: string) => void;
+  /** Merge a new engagement measurement into the running totals */
+  recordEngagement: (nodeId: string, score: number) => void;
+  /** Update cinema author fields on a node */
+  updateNodeCinemaFields: (id: string, fields: { cinemaScript?: string; cinemaBottleneck?: boolean; cinemaSkip?: boolean }) => void;
+  /** Update cinema author fields on a group */
+  updateGroupCinemaFields: (id: string, fields: { cinemaScript?: string; cinemaBottleneck?: boolean; cinemaSkip?: boolean }) => void;
 }
 
 // ─── HELPER: compute visible nodes/edges from current state ─────────────────
@@ -447,12 +494,20 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   selectedPhaseId: null,
   focusedPhaseId: null,
   collapsedPhaseIds: [],
+  focusedOwner: null,
+  preLaneFocusSnapshot: null,
   currentFileName: null,
   fileHandle: null,
   clipboard: [],
   tagRegistry: [],
   ownerRegistry: [],
   meta: null,
+  discoveryActive: false,
+  discoverySequence: null,
+  discoverySceneIndex: 0,
+  discoveryVisited: [],
+  discoveryEngagement: {},
+  discoveryRoleMap: {},
 
   // ── clearGraph ────────────────────────────────────────────────────────────
   clearGraph: () => {
@@ -487,11 +542,19 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       selectedPhaseId: null,
       focusedPhaseId: null,
       collapsedPhaseIds: [],
+      focusedOwner: null,
+      preLaneFocusSnapshot: null,
       currentFileName: null,
       fileHandle: null,
       tagRegistry: [],
       ownerRegistry: [],
       meta: null,
+      discoveryActive: false,
+      discoverySequence: null,
+      discoverySceneIndex: 0,
+      discoveryVisited: [],
+      discoveryEngagement: {},
+      discoveryRoleMap: {},
     });
   },
 
@@ -591,12 +654,21 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       selectedPhaseId: null,
       focusedPhaseId: null,
       collapsedPhaseIds: [],
+      focusedOwner: null,
+      preLaneFocusSnapshot: null,
       tagRegistry,
       ownerRegistry,
       meta,
       transform: activeLayout ? activeLayout.transform : { x: 0, y: 0, k: 1 },
       currentFileName: fileName ?? null,
       fileHandle: null, // caller sets this via setFileHandle after loadData
+      // Extract persisted engagement scores — stored under _layout.discoveryEngagement
+      discoveryEngagement: (savedLayout as { discoveryEngagement?: CinemaEngagementMap } | null)?.discoveryEngagement ?? {},
+      // Reset transient cinema state on every file load
+      discoveryActive: false,
+      discoverySequence: null,
+      discoverySceneIndex: 0,
+      discoveryVisited: [],
     });
   },
 
@@ -1219,6 +1291,107 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       get().rebuildGraph();
       setTimeout(() => get().fitToScreen(), 60);
     }
+  },
+
+  // ── enterOwnerFocus ───────────────────────────────────────────────────────
+
+  /**
+   * enterOwnerFocus — activates Owner Focus Mode for the given owner lane.
+   *
+   * Computes upstream and downstream cross-lane nodes, hides entirely isolated
+   * owner lanes (to compact the spatial layout), saves a snapshot for restore,
+   * and re-derives visibility and positions.
+   */
+  enterOwnerFocus: (owner: string) => {
+    const state = get();
+
+    // IDs of nodes belonging to the focused owner
+    const focusedOwnerNodeIds = new Set(
+      state.allNodes.filter((n) => n.owner === owner).map((n) => n.id)
+    );
+
+    // Upstream: nodes in OTHER owner lanes that focused-owner nodes depend on
+    const upstreamNodeIds = new Set<string>();
+    state.allNodes.forEach((n) => {
+      if (n.owner === owner) {
+        n.dependencies.forEach((dep) => {
+          const depNode = state.allNodes.find((d) => d.id === dep);
+          if (depNode && depNode.owner !== owner) upstreamNodeIds.add(dep);
+        });
+      }
+    });
+
+    // Downstream: nodes in OTHER owner lanes that depend on focused-owner nodes
+    const downstreamNodeIds = new Set<string>();
+    state.allNodes.forEach((n) => {
+      if (n.owner !== owner && n.dependencies.some((dep) => focusedOwnerNodeIds.has(dep))) {
+        downstreamNodeIds.add(n.id);
+      }
+    });
+
+    // Connected owners = focused owner + any owner with at least one upstream/downstream node
+    const connectedOwners = new Set<string>([owner]);
+    [...upstreamNodeIds, ...downstreamNodeIds].forEach((id) => {
+      const n = state.allNodes.find((x) => x.id === id);
+      if (n) connectedOwners.add(n.owner);
+    });
+
+    // Snapshot current state so we can restore exactly on exit.
+    // If already in owner focus (switching owners), preserve the ORIGINAL snapshot
+    // so exit always returns to the state before any owner focus was entered.
+    const existingSnap = state.preLaneFocusSnapshot;
+    const preLaneFocusSnapshot: OwnerFocusSnapshot = {
+      activeOwners: existingSnap ? existingSnap.activeOwners : new Set(state.activeOwners),
+      positions:    existingSnap ? existingSnap.positions    : { ...state.positions },
+      laneMetrics:  existingSnap ? existingSnap.laneMetrics  : { ...state.laneMetrics },
+      transform:    existingSnap ? existingSnap.transform    : { ...state.transform },
+    };
+
+    const { visibleNodes, visibleEdges } = deriveVisibility(
+      state.allNodes, state.allEdges, connectedOwners, false, null, state.groups
+    );
+    const { positions, laneMetrics } = derivePositions(
+      visibleNodes, visibleEdges, state.viewMode, connectedOwners, state.allNodes
+    );
+
+    set({
+      focusedOwner: owner,
+      preLaneFocusSnapshot,
+      activeOwners: connectedOwners,
+      visibleNodes,
+      visibleEdges,
+      positions,
+      laneMetrics,
+    });
+
+    setTimeout(() => get().fitToScreen(), 60);
+  },
+
+  // ── exitOwnerFocus ────────────────────────────────────────────────────────
+
+  /**
+   * exitOwnerFocus — restores the graph to the state it was in before owner focus was entered.
+   */
+  exitOwnerFocus: () => {
+    const state = get();
+    const snap = state.preLaneFocusSnapshot;
+    if (!snap) return;
+
+    const { visibleNodes, visibleEdges } = deriveVisibility(
+      state.allNodes, state.allEdges, snap.activeOwners, false, null, state.groups
+    );
+
+    set({
+      focusedOwner: null,
+      preLaneFocusSnapshot: null,
+      activeOwners: snap.activeOwners,
+      visibleNodes,
+      visibleEdges,
+      positions: snap.positions,
+      laneMetrics: snap.laneMetrics,
+      transform: snap.transform,
+      flyTarget: null, // stop any in-flight fitToScreen animation from enterOwnerFocus
+    });
   },
 
   // ── saveLayoutToCache ─────────────────────────────────────────────────────
@@ -2082,6 +2255,68 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     const key = name.toLowerCase();
     set((s) => ({
       ownerRegistry: s.ownerRegistry.filter((o) => o.toLowerCase() !== key),
+    }));
+  },
+
+  // ── Cinema / Discovery actions ────────────────────────────────────────────
+
+  startDiscovery: (sequence) => {
+    set({
+      discoveryActive: true,
+      discoverySequence: sequence,
+      discoverySceneIndex: 0,
+      discoveryVisited: [],
+    });
+  },
+
+  exitDiscovery: () => {
+    set({ discoveryActive: false, discoveryRoleMap: {} });
+    // discoverySequence, discoveryVisited, and discoveryEngagement are
+    // intentionally preserved after exit — Phase 2 (Reconstruction) and
+    // Phase 3 (Heatmap) read them in a subsequent session.
+  },
+
+  setDiscoveryRoleMap: (map) => set({ discoveryRoleMap: map }),
+
+  advanceScene: () => {
+    set((s) => {
+      const max = (s.discoverySequence?.scenes.length ?? 1) - 1;
+      return { discoverySceneIndex: Math.min(s.discoverySceneIndex + 1, max) };
+    });
+  },
+
+  retreatScene: () => {
+    set((s) => ({ discoverySceneIndex: Math.max(s.discoverySceneIndex - 1, 0) }));
+  },
+
+  visitNode: (nodeId) => {
+    set((s) => {
+      if (s.discoveryVisited.includes(nodeId)) return s;
+      return { discoveryVisited: [...s.discoveryVisited, nodeId] };
+    });
+  },
+
+  recordEngagement: (nodeId, score) => {
+    set((s) => ({
+      discoveryEngagement: {
+        ...s.discoveryEngagement,
+        [nodeId]: (s.discoveryEngagement[nodeId] ?? 0) + score,
+      },
+    }));
+  },
+
+  updateNodeCinemaFields: (id, fields) => {
+    set((s) => ({
+      allNodes: s.allNodes.map((n) => (n.id === id ? { ...n, ...fields } : n)),
+      visibleNodes: s.visibleNodes.map((n) => (n.id === id ? { ...n, ...fields } : n)),
+      designDirty: true,
+    }));
+  },
+
+  updateGroupCinemaFields: (id, fields) => {
+    set((s) => ({
+      groups: s.groups.map((g) => (g.id === id ? { ...g, ...fields } : g)),
+      designDirty: true,
     }));
   },
 }));

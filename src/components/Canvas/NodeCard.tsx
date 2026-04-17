@@ -22,14 +22,16 @@ interface NodeCardProps {
   color: string;
   screenToSvg: (clientX: number, clientY: number) => Position;
   onFocusRequest: (id: string) => void;
+  laneFocusRole?: 'owned' | 'upstream' | 'downstream' | 'partial' | null;
 }
 
-export const NodeCard = memo(function NodeCard({ node, position, color, screenToSvg, onFocusRequest }: NodeCardProps) {
+export const NodeCard = memo(function NodeCard({ node, position, color, screenToSvg, onFocusRequest, laneFocusRole }: NodeCardProps) {
   const {
     selectedNodeId, lastJumpedNodeId,
     designMode, designTool, connectSourceId,
     setSelectedNode, setHoveredNode, setConnectSource, addEdge,
     saveLayoutToCache, settleAndResolve, multiSelectIds, toggleMultiSelect,
+    discoveryActive, discoveryRoleMap,
   } = useGraphStore();
 
   const groupRef = useRef<SVGGElement>(null);
@@ -302,13 +304,24 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
     }
   }
 
+  // ── Owner focus role visuals ───────────────────────────────────────────
+  const laneFocusOpacity =
+    laneFocusRole === 'upstream' || laneFocusRole === 'downstream' ? 0.8
+    : laneFocusRole === 'partial' ? 0.15
+    : 1;
+
+  // During cinema, inline opacity is suppressed so CSS discovery classes control opacity
+  const inlineOpacity = discoveryActive ? undefined : laneFocusOpacity;
+
+  const discoveryRole = discoveryActive ? (discoveryRoleMap[node.id] ?? 'ghost') : '';
+
   return (
     <g
       ref={groupRef}
-      className={`node-group${isJumped ? ' node-jumped' : ''}${(isSelected || isMultiSelected) && designMode ? ' node-selected' : ''}`}
+      className={`node-group${isJumped ? ' node-jumped' : ''}${(isSelected || isMultiSelected) && designMode ? ' node-selected' : ''}${discoveryRole ? ` discovery-${discoveryRole}` : ''}`}
       data-id={node.id}
       // CSS transform (not SVG attribute) enables CSS transitions for view/focus switches
-      style={{ cursor: 'grab', transform: `translate(${position.x}px,${position.y}px)` }}
+      style={{ cursor: 'grab', transform: `translate(${position.x}px,${position.y}px)`, opacity: inlineOpacity }}
       onMouseDown={handleMouseDown}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
@@ -339,6 +352,24 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
 
       {/* Left accent bar */}
       <rect x={0} y={0} width={4} height={NODE_H} rx={3} fill={color} />
+
+      {/* Owner focus directional accents + badge (upstream = blue left edge, downstream = amber right edge) */}
+      {laneFocusRole === 'upstream' && (
+        <g style={{ pointerEvents: 'none' }}>
+          <rect x={0} y={0} width={4} height={NODE_H} rx={3} fill="#4f9eff" />
+          <rect x={NODE_W - 20} y={4} width={18} height={14} rx={4} fill="#4f9eff" opacity={0.92} />
+          <text x={NODE_W - 11} y={14} fontFamily="var(--font-mono)" fontSize={9} fontWeight={700}
+            fill="#fff" textAnchor="middle">⬆</text>
+        </g>
+      )}
+      {laneFocusRole === 'downstream' && (
+        <g style={{ pointerEvents: 'none' }}>
+          <rect x={NODE_W - 4} y={0} width={4} height={NODE_H} rx={3} fill="#f5a623" />
+          <rect x={NODE_W - 20} y={4} width={18} height={14} rx={4} fill="#f5a623" opacity={0.92} />
+          <text x={NODE_W - 11} y={14} fontFamily="var(--font-mono)" fontSize={9} fontWeight={700}
+            fill="#fff" textAnchor="middle">⬇</text>
+        </g>
+      )}
 
       {/* Node name */}
       <text x={14} y={33} fontFamily="var(--font-mono)" fontSize={11.5} fontWeight={600}

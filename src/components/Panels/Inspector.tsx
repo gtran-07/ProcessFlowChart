@@ -8,7 +8,7 @@
  * In Design Mode an "Edit Node" / "Edit Group" / "Edit Phase" button appears.
  */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useGraphStore } from '../../store/graphStore';
 import styles from './Inspector.module.css';
 
@@ -17,8 +17,11 @@ export function InspectorContent() {
     selectedNodeId, allNodes, ownerColors, setSelectedNode, designMode,
     selectedGroupId, groups, setSelectedGroup,
     selectedPhaseId, phases, setSelectedPhaseId, deletePhase,
-    multiSelectIds,
+    multiSelectIds, updateNodeCinemaFields, updateGroupCinemaFields,
   } = useGraphStore();
+
+  // Local draft for cinemaScript textarea — committed onBlur to avoid store thrash
+  const [scriptDraft, setScriptDraft] = useState('');
 
   const selectedNode = selectedNodeId
     ? allNodes.find((node) => node.id === selectedNodeId)
@@ -27,6 +30,13 @@ export function InspectorContent() {
   const selectedGroup = selectedGroupId
     ? groups.find((g) => g.id === selectedGroupId)
     : null;
+
+  // Sync the script draft when selection changes
+  useEffect(() => {
+    if (selectedNode) setScriptDraft(selectedNode.cinemaScript ?? '');
+    else if (selectedGroup) setScriptDraft(selectedGroup.cinemaScript ?? '');
+    else setScriptDraft('');
+  }, [selectedNodeId, selectedGroupId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedPhase = selectedPhaseId
     ? phases.find((p) => p.id === selectedPhaseId)
@@ -241,6 +251,19 @@ export function InspectorContent() {
             ✏️ Edit Group
           </button>
         )}
+
+        {/* Cinema author fields — design mode only */}
+        {designMode && (
+          <CinemaAuthorFields
+            scriptDraft={scriptDraft}
+            onScriptChange={setScriptDraft}
+            onScriptBlur={() => updateGroupCinemaFields(selectedGroup.id, { cinemaScript: scriptDraft || undefined })}
+            bottleneck={!!selectedGroup.cinemaBottleneck}
+            onBottleneckChange={(v) => updateGroupCinemaFields(selectedGroup.id, { cinemaBottleneck: v || undefined })}
+            skip={!!selectedGroup.cinemaSkip}
+            onSkipChange={(v) => updateGroupCinemaFields(selectedGroup.id, { cinemaSkip: v || undefined })}
+          />
+        )}
       </>
     );
   }
@@ -364,6 +387,19 @@ export function InspectorContent() {
             ✏️ Edit Node
           </button>
         )}
+
+        {/* Cinema author fields — design mode only */}
+        {designMode && (
+          <CinemaAuthorFields
+            scriptDraft={scriptDraft}
+            onScriptChange={setScriptDraft}
+            onScriptBlur={() => updateNodeCinemaFields(selectedNode.id, { cinemaScript: scriptDraft || undefined })}
+            bottleneck={!!selectedNode.cinemaBottleneck}
+            onBottleneckChange={(v) => updateNodeCinemaFields(selectedNode.id, { cinemaBottleneck: v || undefined })}
+            skip={!!selectedNode.cinemaSkip}
+            onSkipChange={(v) => updateNodeCinemaFields(selectedNode.id, { cinemaSkip: v || undefined })}
+          />
+        )}
       </>
     );
   }
@@ -373,3 +409,98 @@ export function InspectorContent() {
 
 /** @deprecated Use InspectorContent inside the LeftPane tabs instead */
 export { InspectorContent as Inspector };
+
+// ─── Cinema author fields sub-component ──────────────────────────────────────
+
+interface CinemaAuthorFieldsProps {
+  scriptDraft: string;
+  onScriptChange: (v: string) => void;
+  onScriptBlur: () => void;
+  bottleneck: boolean;
+  onBottleneckChange: (v: boolean) => void;
+  skip: boolean;
+  onSkipChange: (v: boolean) => void;
+}
+
+function CinemaAuthorFields({
+  scriptDraft, onScriptChange, onScriptBlur,
+  bottleneck, onBottleneckChange,
+  skip, onSkipChange,
+}: CinemaAuthorFieldsProps) {
+  const dividerStyle: React.CSSProperties = {
+    marginTop: 18,
+    paddingTop: 12,
+    borderTop: '1px solid var(--border)',
+  };
+  const sectionStyle: React.CSSProperties = {
+    fontFamily: 'var(--font-mono)',
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    color: 'var(--text3)',
+    marginBottom: 6,
+  };
+  const textareaStyle: React.CSSProperties = {
+    width: '100%',
+    minHeight: 68,
+    resize: 'vertical',
+    background: 'var(--bg3)',
+    border: '1px solid var(--border2)',
+    borderRadius: 4,
+    color: 'var(--text2)',
+    fontFamily: 'var(--font-mono)',
+    fontSize: 11,
+    lineHeight: 1.55,
+    padding: '6px 8px',
+    outline: 'none',
+  };
+  const checkRowStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+    cursor: 'pointer',
+  };
+  const checkLabelStyle: React.CSSProperties = {
+    fontFamily: 'var(--font-mono)',
+    fontSize: 11,
+    color: 'var(--text2)',
+    userSelect: 'none',
+  };
+
+  return (
+    <div style={dividerStyle}>
+      <div style={sectionStyle}>Cinema</div>
+
+      <div style={{ marginBottom: 8, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)' }}>
+        Narration override
+      </div>
+      <textarea
+        style={textareaStyle}
+        value={scriptDraft}
+        placeholder="Auto-generated from node data. Write here to override."
+        onChange={(e) => onScriptChange(e.target.value)}
+        onBlur={onScriptBlur}
+      />
+
+      <label style={checkRowStyle}>
+        <input
+          type="checkbox"
+          checked={bottleneck}
+          onChange={(e) => onBottleneckChange(e.target.checked)}
+        />
+        <span style={checkLabelStyle}>Force bottleneck in cinema</span>
+      </label>
+
+      <label style={checkRowStyle}>
+        <input
+          type="checkbox"
+          checked={skip}
+          onChange={(e) => onSkipChange(e.target.checked)}
+        />
+        <span style={checkLabelStyle}>Skip in cinema tour</span>
+      </label>
+    </div>
+  );
+}

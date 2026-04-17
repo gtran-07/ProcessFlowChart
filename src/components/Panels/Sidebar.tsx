@@ -15,13 +15,14 @@
  *   • flowgraph:toggle-inspector → ensure open + switch to Inspector tab
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useGraphStore } from '../../store/graphStore';
 import { InspectorContent } from './Inspector';
+import { CinemaTabContent } from '../Cinema/CinemaOverlay';
 import styles from './Sidebar.module.css';
 import type { NodeTag } from '../../types/graph';
 
-type LeftTab = 'owners' | 'inspector' | 'tags';
+type LeftTab = 'owners' | 'inspector' | 'tags' | 'cinema';
 
 const MIN_WIDTH = 220;
 const MAX_WIDTH = 560;
@@ -175,6 +176,7 @@ function OwnersPanel() {
   const {
     allNodes, activeOwners, ownerColors, toggleOwner, toggleAllOwners, fitToScreen,
     designMode, ownerRegistry, renameOwner, setOwnerColor, addOwnerToRegistry, removeOwnerFromRegistry,
+    focusedOwner, enterOwnerFocus, exitOwnerFocus,
   } = useGraphStore();
 
   // Combined owner list: nodes + registry
@@ -195,6 +197,28 @@ function OwnersPanel() {
 
   // Remove error
   const [removeError, setRemoveError] = useState<string | null>(null);
+
+  // ── Owner Focus Mode: compute upstream/downstream maps ────────────────────
+  const { upstreamByOwner, downstreamByOwner } = useMemo(() => {
+    if (!focusedOwner) return { upstreamByOwner: new Map<string, number>(), downstreamByOwner: new Map<string, number>() };
+    const ownedIds = new Set(allNodes.filter((n) => n.owner === focusedOwner).map((n) => n.id));
+    const upMap = new Map<string, number>();
+    allNodes.forEach((n) => {
+      if (n.owner === focusedOwner) {
+        n.dependencies.forEach((dep) => {
+          const d = allNodes.find((x) => x.id === dep);
+          if (d && d.owner !== focusedOwner) upMap.set(d.owner, (upMap.get(d.owner) ?? 0) + 1);
+        });
+      }
+    });
+    const downMap = new Map<string, number>();
+    allNodes.forEach((n) => {
+      if (n.owner !== focusedOwner && n.dependencies.some((dep) => ownedIds.has(dep))) {
+        downMap.set(n.owner, (downMap.get(n.owner) ?? 0) + 1);
+      }
+    });
+    return { upstreamByOwner: upMap, downstreamByOwner: downMap };
+  }, [focusedOwner, allNodes]);
 
   function handleToggleOwner(owner: string) {
     toggleOwner(owner);
@@ -308,10 +332,20 @@ function OwnersPanel() {
           }
 
           // ── Normal row ────────────────────────────────────────────────────
+          const isFocusedOwner = focusedOwner === owner;
+          const isUpstream = !!focusedOwner && upstreamByOwner.has(owner);
+          const isDownstream = !!focusedOwner && downstreamByOwner.has(owner);
+          const isIsolated = !!focusedOwner && !isFocusedOwner && !isUpstream && !isDownstream;
+          const rowFocusClass = isFocusedOwner ? styles.focusedRow
+            : isUpstream ? styles.upstreamRow
+            : isDownstream ? styles.downstreamRow
+            : isIsolated ? styles.isolatedRow
+            : '';
+
           return (
             <React.Fragment key={owner}>
               <div
-                className={`${styles.filterItem} ${isActive ? styles.checked : ''}`}
+                className={`${styles.filterItem} ${isActive ? styles.checked : ''} ${rowFocusClass}`}
                 onClick={() => handleToggleOwner(owner)}
               >
                 <div className={styles.checkBox} />
@@ -341,6 +375,21 @@ function OwnersPanel() {
                       title="Remove owner"
                     >✕</button>
                   </>
+                )}
+                <button
+                  className={`${styles.tagActionBtn} ${focusedOwner === owner ? styles.focusBtnActive : ''}`}
+                  title={focusedOwner === owner ? `Exit Lane Focus` : `Focus on ${owner} lane`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (focusedOwner === owner) exitOwnerFocus();
+                    else enterOwnerFocus(owner);
+                  }}
+                >◎</button>
+                {isUpstream && (
+                  <span className={`${styles.dirBadge} ${styles.upBadge}`}>⬆ {upstreamByOwner.get(owner)}</span>
+                )}
+                {isDownstream && (
+                  <span className={`${styles.dirBadge} ${styles.downBadge}`}>⬇ {downstreamByOwner.get(owner)}</span>
                 )}
                 <span className={styles.filterCount}>{count}</span>
               </div>
@@ -393,6 +442,7 @@ export function Sidebar() {
     allNodes, groups, phases, ownerColors,
     selectedNodeId, selectedGroupId, selectedPhaseId,
     multiSelectIds,
+    discoveryActive, designMode,
   } = useGraphStore();
 
   const [collapsed, setCollapsed] = useState(true);
@@ -404,10 +454,26 @@ export function Sidebar() {
   const isResizing = useRef(false);
   const resizeStartX = useRef(0);
   const resizeStartW = useRef(0);
+  const prevDiscoveryActive = useRef(false);
 
   const hasSelection =
     (!!selectedNodeId || !!selectedGroupId || !!selectedPhaseId) &&
     multiSelectIds.length <= 1;
+
+  // ── Auto-expand sidebar + switch to Cinema tab when cinema starts ─────────
+  useEffect(() => {
+    if (discoveryActive && !prevDiscoveryActive.current) {
+      setCollapsed(false);
+      setActiveTab('cinema');
+    }
+    // When cinema exits while on cinema tab, fall back to owners
+    if (!discoveryActive && prevDiscoveryActive.current && activeTab === 'cinema') {
+      setActiveTab('owners');
+    }
+    prevDiscoveryActive.current = discoveryActive;
+  // activeTab intentionally omitted — we only care about the transition edge
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discoveryActive]);
 
   // ── Auto-expand on first data load ───────────────────────────────────────
   useEffect(() => {
@@ -426,39 +492,42 @@ export function Sidebar() {
 
   useEffect(() => {
     if (selectedNodeId && selectedNodeId !== prevNodeId.current) {
-      if (!collapsed) {
-        setActiveTab('inspector');
-        setShowHint(false);
-      } else {
-        setShowHint(true);
-      }
+      if (!collapsed) { setActiveTab('inspector'); setShowHint(false); }
+      else setShowHint(true);
+    }
+    // Return to Cinema tab when node is deselected during a tour
+    if (!selectedNodeId && prevNodeId.current && !collapsed && discoveryActive) {
+      setActiveTab('cinema');
     }
     prevNodeId.current = selectedNodeId;
-  }, [selectedNodeId, collapsed]);
+  }, [selectedNodeId, collapsed, discoveryActive]);
 
   useEffect(() => {
     if (selectedGroupId && selectedGroupId !== prevGroupId.current) {
-      if (!collapsed) {
-        setActiveTab('inspector');
-        setShowHint(false);
-      } else {
-        setShowHint(true);
-      }
+      if (!collapsed) { setActiveTab('inspector'); setShowHint(false); }
+      else setShowHint(true);
+    }
+    if (!selectedGroupId && prevGroupId.current && !collapsed && discoveryActive) {
+      setActiveTab('cinema');
     }
     prevGroupId.current = selectedGroupId;
-  }, [selectedGroupId, collapsed]);
+  }, [selectedGroupId, collapsed, discoveryActive]);
 
   useEffect(() => {
     if (selectedPhaseId && selectedPhaseId !== prevPhaseId.current) {
-      if (!collapsed) {
-        setActiveTab('inspector');
-        setShowHint(false);
-      } else {
-        setShowHint(true);
-      }
+      if (!collapsed) { setActiveTab('inspector'); setShowHint(false); }
+      else setShowHint(true);
+    }
+    if (!selectedPhaseId && prevPhaseId.current && !collapsed && discoveryActive) {
+      setActiveTab('cinema');
     }
     prevPhaseId.current = selectedPhaseId;
-  }, [selectedPhaseId, collapsed]);
+  }, [selectedPhaseId, collapsed, discoveryActive]);
+
+  // Fall back from Tags tab when leaving design mode
+  useEffect(() => {
+    if (!designMode && activeTab === 'tags') setActiveTab('owners');
+  }, [designMode, activeTab]);
 
   // Hide hint when pane opens or selection is cleared
   useEffect(() => {
@@ -565,11 +634,20 @@ export function Sidebar() {
             onClick={() => setActiveTab('inspector')}
             title="Inspector — selected item details"
           >Inspector</button>
-          <button
-            className={`${styles.tab} ${activeTab === 'tags' ? styles.tabActive : ''}`}
-            onClick={() => setActiveTab('tags')}
-            title="Tags & owner colour management"
-          >Tags</button>
+          {designMode && (
+            <button
+              className={`${styles.tab} ${activeTab === 'tags' ? styles.tabActive : ''}`}
+              onClick={() => setActiveTab('tags')}
+              title="Tags & owner colour management"
+            >Tags</button>
+          )}
+          {discoveryActive && (
+            <button
+              className={`${styles.tab} ${styles.tabCinema} ${activeTab === 'cinema' ? styles.tabActive : ''}`}
+              onClick={() => setActiveTab('cinema')}
+              title="Process Cinema — guided tour"
+            >Cinema</button>
+          )}
           <button
             className={styles.collapseBtn}
             onClick={() => setCollapsed(true)}
@@ -578,7 +656,7 @@ export function Sidebar() {
         </div>
 
         {/* Tab content */}
-        <div className={styles.body}>
+        <div className={`${styles.body} ${activeTab === 'cinema' ? styles.bodycinema : ''}`}>
           {activeTab === 'owners' && <OwnersPanel />}
           {activeTab === 'inspector' && (
             <div className={styles.inspectorWrap}>
@@ -586,6 +664,7 @@ export function Sidebar() {
             </div>
           )}
           {activeTab === 'tags' && <TagsPanel />}
+          {activeTab === 'cinema' && <CinemaTabContent />}
         </div>
 
         {/* Resize handle */}
@@ -607,10 +686,29 @@ export function Sidebar() {
         </button>
       )}
 
+      {/* ── Cinema hint when collapsed + discovery active ─────────────────── */}
+      {collapsed && discoveryActive && (
+        <div
+          className={`${styles.collapsedHint} ${styles.collapsedHintCinema}`}
+          style={{ top: 56 }}
+          onClick={() => { setCollapsed(false); setActiveTab('cinema'); }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { setCollapsed(false); setActiveTab('cinema'); } }}
+        >
+          <span className={styles.hintIcon}>▶</span>
+          <div className={styles.hintBody}>
+            <span className={styles.hintName}>Cinema Tour Active</span>
+            <span className={styles.hintCta}>↗ Click to open Cinema tab</span>
+          </div>
+        </div>
+      )}
+
       {/* ── Floating hint when collapsed + item selected ──────────────────── */}
       {collapsed && (
         <div
           className={`${styles.collapsedHint} ${!showHint ? styles.collapsedHintHidden : ''}`}
+          style={discoveryActive ? { top: 116 } : undefined}
           onClick={handleHintClick}
           role="button"
           tabIndex={showHint ? 0 : -1}

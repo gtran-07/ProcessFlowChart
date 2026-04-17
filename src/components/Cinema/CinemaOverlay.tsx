@@ -1,0 +1,417 @@
+/**
+ * CinemaOverlay.tsx
+ *
+ * Exports:
+ *   CinemaOverlay    — first-visit banner portalled into #canvas-wrap.
+ *   CinemaTabContent — full cinema UI rendered as a sidebar tab body.
+ */
+
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import ReactDOM from 'react-dom';
+import { useGraphStore } from '../../store/graphStore';
+import type { CinemaScene, CinemaSceneType } from '../../types/graph';
+import { NODE_W, NODE_H } from '../../utils/layout';
+import styles from './CinemaOverlay.module.css';
+
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
+const DWELL_WEIGHT = 1.0;
+const CLICK_WEIGHT = 300;
+const REVISIT_WEIGHT = 500;
+
+const TYPE_LABELS: Record<CinemaSceneType, string> = {
+  genesis: 'Origin',
+  terminal: 'Output',
+  fork: 'Fork',
+  bottleneck: 'Bottleneck',
+  convergence: 'Convergence',
+  bridge: 'Phase Transition',
+  reveal: 'Step',
+  parallel: 'Parallel Group',
+  prediction: 'Predict',
+};
+
+const TYPE_PILL_CLASS: Record<CinemaSceneType, string> = {
+  genesis: styles.typeGenesis,
+  terminal: styles.typeTerminal,
+  fork: styles.typeFork,
+  bottleneck: styles.typeBottleneck,
+  convergence: styles.typeConvergence,
+  bridge: styles.typeBridge,
+  reveal: styles.typeReveal,
+  parallel: styles.typeParallel,
+  prediction: styles.typePrediction,
+};
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+
+function computeRoleMap(
+  scene: CinemaScene,
+  visitedIds: Set<string>,
+  allNodeIds: string[]
+): Record<string, string> {
+  const map: Record<string, string> = {};
+  const focusSet = new Set(scene.nodeIds);
+  const litSet = new Set<string>([
+    ...(scene.parentIds ?? []),
+    ...(scene.convergenceIds ?? []),
+  ]);
+  const isDanger = scene.type === 'bottleneck';
+  for (const id of allNodeIds) {
+    if (focusSet.has(id)) map[id] = isDanger ? 'danger' : 'focus';
+    else if (visitedIds.has(id)) map[id] = 'visited';
+    else if (litSet.has(id)) map[id] = 'lit';
+    else map[id] = 'ghost';
+  }
+  return map;
+}
+
+const BANNER_KEY = 'flowgraph:cinema-banner-seen:';
+function shouldShowBanner(f: string | null) { return !!f && !localStorage.getItem(BANNER_KEY + f); }
+function dismissBanner(f: string | null) { if (f) localStorage.setItem(BANNER_KEY + f, '1'); }
+
+function graphIsComplex(
+  nodes: import('../../types/graph').GraphNode[],
+  edges: import('../../types/graph').GraphEdge[],
+  phases: import('../../types/graph').GraphPhase[]
+): boolean {
+  const inDeg = new Map<string, number>();
+  const outDeg = new Map<string, number>();
+  for (const n of nodes) { inDeg.set(n.id, 0); outDeg.set(n.id, 0); }
+  for (const e of edges) {
+    inDeg.set(e.to, (inDeg.get(e.to) ?? 0) + 1);
+    outDeg.set(e.from, (outDeg.get(e.from) ?? 0) + 1);
+  }
+  const assigned = new Set(phases.flatMap((p) => p.nodeIds)).size;
+  return [...inDeg.values()].some((d) => d >= 2)
+    || [...outDeg.values()].some((d) => d >= 2)
+    || (phases.length >= 2 && nodes.length > 0 && assigned / nodes.length >= 0.3);
+}
+
+function timeRemainingLabel(scenes: CinemaScene[], from: number) {
+  const secs = scenes.slice(from).reduce((s, sc) => s + sc.readingTimeSeconds, 0);
+  const mins = Math.ceil(secs / 60);
+  return mins < 1 ? '< 1 min' : `~${mins} min`;
+}
+
+// ─── BANNER ───────────────────────────────────────────────────────────────────
+// Portalled into #canvas-wrap. Only shown when cinema is NOT active.
+
+export function CinemaOverlay(): React.ReactElement | null {
+  const { discoveryActive, allNodes, allEdges, phases, currentFileName } = useGraphStore();
+  const [bannerVisible, setBannerVisible] = useState(false);
+
+  useEffect(() => {
+    if (!discoveryActive && graphIsComplex(allNodes, allEdges, phases)) {
+      setBannerVisible(shouldShowBanner(currentFileName));
+    }
+  }, [discoveryActive, allNodes, allEdges, phases, currentFileName]);
+
+  const canvasWrap = document.getElementById('canvas-wrap');
+  if (!canvasWrap || discoveryActive || !bannerVisible) return null;
+
+  return ReactDOM.createPortal(
+    <div className={styles.overlay} data-cinema-overlay="">
+      <div className={styles.banner}>
+        <span className={styles.bannerText}>
+          <strong>Process Cinema</strong> — discover the structure of this graph as a guided story.
+        </span>
+        <button className={styles.bannerBtn} onClick={() => { dismissBanner(currentFileName); setBannerVisible(false); }}>
+          Got it
+        </button>
+        <button className={styles.bannerDismiss} onClick={() => { dismissBanner(currentFileName); setBannerVisible(false); }} aria-label="Dismiss">
+          ×
+        </button>
+      </div>
+    </div>,
+    canvasWrap
+  );
+}
+
+// ─── TAB CONTENT ──────────────────────────────────────────────────────────────
+// Rendered as a sidebar tab body. No portal, no absolute positioning.
+
+export function CinemaTabContent(): React.ReactElement | null {
+  const {
+    discoveryActive, discoverySequence, discoverySceneIndex, discoveryVisited,
+    allNodes, allEdges, phases, positions,
+    exitDiscovery, advanceScene, retreatScene, visitNode, recordEngagement,
+    setDiscoveryRoleMap, flyTo,
+  } = useGraphStore();
+
+  const [showPreview, setShowPreview] = useState(true);
+  const [answeredOptionId, setAnsweredOptionId] = useState<string | null>(null);
+  const sceneStartRef = useRef<number>(Date.now());
+  const clickCountRef = useRef<Record<string, number>>({});
+
+  const flyToScene = useCallback((scene: CinemaScene) => {
+    const el = document.getElementById('canvas-wrap');
+    if (!el) return;
+    const { width: W, height: H } = el.getBoundingClientRect();
+    const pts = scene.nodeIds.map((id) => positions[id]).filter(Boolean) as { x: number; y: number }[];
+    if (!pts.length) return;
+    const cx = pts.reduce((s, p) => s + p.x + NODE_W / 2, 0) / pts.length;
+    const cy = pts.reduce((s, p) => s + p.y + NODE_H / 2, 0) / pts.length;
+    flyTo({ x: W / 2 - cx * 0.75, y: H / 2 - cy * 0.75, k: 0.75 });
+  }, [positions, flyTo]);
+
+  // Reset on cinema start
+  useEffect(() => {
+    if (discoveryActive) {
+      setShowPreview(true);
+      setAnsweredOptionId(null);
+      clickCountRef.current = {};
+    }
+  }, [discoveryActive]);
+
+  // Reset prediction on scene change
+  useEffect(() => {
+    setAnsweredOptionId(null);
+    sceneStartRef.current = Date.now();
+    clickCountRef.current = {};
+  }, [discoverySceneIndex]);
+
+  // Apply canvas staging
+  const visitedSet = new Set(discoveryVisited);
+  const allNodeIds = allNodes.map((n) => n.id);
+
+  useEffect(() => {
+    if (!discoveryActive || showPreview || !discoverySequence) return;
+    const scene = discoverySequence.scenes[discoverySceneIndex];
+    if (!scene) return;
+    setDiscoveryRoleMap(computeRoleMap(scene, visitedSet, allNodeIds));
+    scene.nodeIds.forEach((id) => visitNode(id));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discoveryActive, showPreview, discoverySceneIndex, discoverySequence]);
+
+  // Canvas click tracking
+  useEffect(() => {
+    if (!discoveryActive) return;
+    const handle = (e: MouseEvent) => {
+      const g = (e.target as Element).closest('.node-group');
+      if (!g) return;
+      const id = g.getAttribute('data-id') ?? g.getAttribute('data-group-id');
+      if (id) clickCountRef.current[id] = (clickCountRef.current[id] ?? 0) + 1;
+    };
+    document.getElementById('canvas-wrap')?.addEventListener('click', handle);
+    return () => document.getElementById('canvas-wrap')?.removeEventListener('click', handle);
+  }, [discoveryActive]);
+
+  // Engagement scoring
+  const commitEngagement = useCallback(() => {
+    if (!discoverySequence) return;
+    const scene = discoverySequence.scenes[discoverySceneIndex];
+    if (!scene) return;
+    const dwell = Date.now() - sceneStartRef.current;
+    for (const id of scene.nodeIds) {
+      const revisits = discoveryVisited.filter((v) => v === id).length;
+      recordEngagement(id, dwell * DWELL_WEIGHT + (clickCountRef.current[id] ?? 0) * CLICK_WEIGHT + revisits * REVISIT_WEIGHT);
+    }
+  }, [discoverySequence, discoverySceneIndex, discoveryVisited, recordEngagement]);
+
+  const handleNext = useCallback(() => {
+    commitEngagement();
+    const scenes = discoverySequence?.scenes ?? [];
+    if (discoverySceneIndex >= scenes.length - 1) { exitDiscovery(); return; }
+    const next = scenes[discoverySceneIndex + 1];
+    advanceScene();
+    flyToScene(next);
+  }, [commitEngagement, discoverySceneIndex, discoverySequence, exitDiscovery, advanceScene, flyToScene]);
+
+  const handleBack = useCallback(() => {
+    commitEngagement();
+    const scenes = discoverySequence?.scenes ?? [];
+    const prev = scenes[discoverySceneIndex - 1];
+    retreatScene();
+    if (prev) flyToScene(prev);
+  }, [commitEngagement, retreatScene, discoverySequence, discoverySceneIndex, flyToScene]);
+
+  const handleExit = useCallback(() => { commitEngagement(); exitDiscovery(); }, [commitEngagement, exitDiscovery]);
+
+  const handleBegin = useCallback(() => {
+    setShowPreview(false);
+    sceneStartRef.current = Date.now();
+    const first = discoverySequence?.scenes[0];
+    if (first) flyToScene(first);
+  }, [flyToScene, discoverySequence]);
+
+  if (!discoveryActive || !discoverySequence || !discoverySequence.scenes.length) return null;
+
+  const scenes = discoverySequence.scenes;
+  const scene = scenes[discoverySceneIndex];
+  if (!scene) return null;
+
+  const isPrediction = scene.type === 'prediction';
+  const isAnswered = answeredOptionId !== null;
+  const isLastScene = discoverySceneIndex >= scenes.length - 1;
+  const nextBlocked = isPrediction && !isAnswered;
+  const progressPct = ((discoverySceneIndex + 1) / scenes.length) * 100;
+
+  let nextLabel = isLastScene ? 'Finish' : 'Next →';
+  if (isPrediction && isAnswered) {
+    const chosen = scene.prediction?.options.find((o) => o.id === answeredOptionId);
+    nextLabel = chosen?.isCorrect ? 'I see it →' : 'Got it →';
+  }
+
+  const primaryNode = allNodes.find((n) => n.id === scene.nodeIds[0]);
+  const phaseName = phases.find((p) => p.nodeIds.includes(scene.nodeIds[0]))?.name;
+  const predCount = scenes.filter((s) => s.type === 'prediction').length;
+
+  // ── Preview ────────────────────────────────────────────────────────────────
+  if (showPreview) {
+    const mins = discoverySequence.estimatedMinutes;
+    const minLabel = mins < 1 ? '< 1 min' : mins === 0.5 ? '~30 sec' : `~${mins} min`;
+
+    return (
+      <div className={styles.tabWrap}>
+        {/* Sticky header */}
+        <div className={styles.cinemaHeader}>
+          <span className={styles.cinemaTitle}>🎬 Process Cinema</span>
+          <button className={styles.exitTourBtn} onClick={handleExit}>
+            ✕ Exit Tour
+          </button>
+        </div>
+
+        {/* Preview body */}
+        <div className={styles.tabBody}>
+          <div className={styles.previewMeta}>
+            <span className={styles.previewTime}>{minLabel}</span>
+            <span className={styles.previewDot}>·</span>
+            <span className={styles.previewStat}>{scenes.length} scene{scenes.length !== 1 ? 's' : ''}</span>
+            {predCount > 0 && (
+              <>
+                <span className={styles.previewDot}>·</span>
+                <span className={styles.previewStat}>{predCount} prediction{predCount !== 1 ? 's' : ''}</span>
+              </>
+            )}
+          </div>
+          <p className={styles.previewDesc}>
+            This tour covers the key structural moments — origins, forks, bottlenecks, and outputs.
+          </p>
+          <div className={styles.previewActions}>
+            <button className={styles.skipBtn} onClick={handleExit}>Skip</button>
+            <button className={styles.beginBtn} onClick={handleBegin}>Begin →</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Active scene ───────────────────────────────────────────────────────────
+  return (
+    <div className={styles.tabWrap}>
+
+      {/* Sticky header: breadcrumbs + Exit Tour */}
+      <div className={styles.cinemaHeader}>
+        <div className={styles.breadcrumbs}>
+          {scenes.map((s, idx) => {
+            const isCurrent = idx === discoverySceneIndex;
+            const isDone = idx < discoverySceneIndex;
+            return (
+              <div
+                key={idx}
+                className={[
+                  styles.crumb,
+                  s.type === 'prediction' ? styles.crumbPrediction : '',
+                  isCurrent ? styles.crumbActive : '',
+                  isDone ? styles.crumbDone : '',
+                ].filter(Boolean).join(' ')}
+                title={`Scene ${idx + 1}: ${s.headline}`}
+                onClick={isDone ? () => {
+                  commitEngagement();
+                  for (let i = 0; i < discoverySceneIndex - idx; i++) retreatScene();
+                  flyToScene(scenes[idx]);
+                } : undefined}
+              />
+            );
+          })}
+        </div>
+        <span className={styles.sceneCounter}>{discoverySceneIndex + 1}/{scenes.length}</span>
+        <button className={styles.exitTourBtn} onClick={handleExit}>
+          ✕ Exit Tour
+        </button>
+      </div>
+
+      {/* Scrollable scene body */}
+      <div className={styles.tabBody}>
+
+        {/* Act + type */}
+        <div className={styles.sceneHeader}>
+          <span className={styles.actBadge}>Act {scene.act}</span>
+          <span className={`${styles.typePill} ${TYPE_PILL_CLASS[scene.type]}`}>
+            {TYPE_LABELS[scene.type]}
+          </span>
+        </div>
+
+        {/* Headline */}
+        <div className={styles.headline}>{scene.headline}</div>
+
+        {/* Facts */}
+        {scene.nodeIds.length === 1 && primaryNode && (
+          <div className={styles.factsRow}>
+            <span className={styles.fact}><strong>Owner:</strong> {primaryNode.owner}</span>
+            {phaseName && <span className={styles.fact}><strong>Phase:</strong> {phaseName}</span>}
+          </div>
+        )}
+
+        {/* Body */}
+        {!isPrediction && <div className={styles.body}>{scene.body}</div>}
+
+        {/* Prediction */}
+        {isPrediction && scene.prediction && (
+          <>
+            <div className={styles.predQuestion}>{scene.prediction.question}</div>
+            <div className={styles.predOptions}>
+              {scene.prediction.options.map((opt) => {
+                const chosen = answeredOptionId === opt.id;
+                return (
+                  <div key={opt.id}>
+                    <button
+                      className={[
+                        styles.predOption,
+                        isAnswered ? styles.predOptionLocked : '',
+                        isAnswered && opt.isCorrect ? styles.predOptionCorrect : '',
+                        isAnswered && chosen && !opt.isCorrect ? styles.predOptionWrong : '',
+                      ].filter(Boolean).join(' ')}
+                      onClick={() => { if (!isAnswered) setAnsweredOptionId(opt.id); }}
+                    >
+                      {opt.text}
+                    </button>
+                    {isAnswered && chosen && (
+                      <div className={styles.predFeedback}>{opt.feedback}</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {/* Insight */}
+        {scene.insight && !isPrediction && (
+          <div className={`${styles.insight} ${scene.type === 'bottleneck' ? styles.insightDanger : ''}`}>
+            {scene.insight}
+          </div>
+        )}
+
+        {/* Nav controls — inside scroll area, always at bottom of content */}
+        <div className={styles.navBar}>
+          <button className={styles.navBtn} onClick={handleBack} disabled={discoverySceneIndex === 0}>
+            ← Back
+          </button>
+          <div className={styles.progressBar}>
+            <div className={styles.progressFill} style={{ width: `${progressPct}%` }} />
+          </div>
+          <span className={styles.timeLeft}>{timeRemainingLabel(scenes, discoverySceneIndex)}</span>
+          <button
+            className={`${styles.navBtn} ${styles.navBtnNext}`}
+            onClick={handleNext}
+            disabled={nextBlocked}
+          >
+            {nextLabel}
+          </button>
+        </div>
+
+      </div>
+    </div>
+  );
+}

@@ -17,6 +17,7 @@ import { GroupEditModal } from './components/DesignMode/GroupEditModal';
 import { PhaseEditModal } from './components/DesignMode/PhaseEditModal';
 import { UserGuideModal } from './components/Modals/UserGuideModal';
 import { SamplePickerModal } from './components/Modals/SamplePickerModal';
+import { CinemaOverlay } from './components/Cinema/CinemaOverlay';
 import styles from './App.module.css';
 
 export default function App() {
@@ -46,6 +47,9 @@ export default function App() {
       <PhaseEditModal />
       <UserGuideModal />
       <SamplePickerModal />
+
+      {/* Cinema overlay — portal into #canvas-wrap; renders nothing when inactive */}
+      <CinemaOverlay />
     </div>
   );
 }

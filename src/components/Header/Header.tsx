@@ -18,6 +18,7 @@ import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { useGraphStore } from '../../store/graphStore';
 import { exportGraphToJson, buildExportPayload } from '../../utils/exportJson';
 import { exportToPdf } from '../../utils/exportPdf';
+import { buildTourSequence } from '../../utils/cinema';
 import type { SavedLayout } from '../../types/graph';
 import styles from './Header.module.css';
 
@@ -29,6 +30,7 @@ export function Header() {
     setSelectedNode, setLastJumpedNode, positions, setTransform, transform, flyTo,
     activeOwners, toggleOwner, layoutCache, currentFileName, ownerColors,
     fileHandle, setFileHandle, setCurrentFileName, groups, phases, tagRegistry, ownerRegistry, meta,
+    discoveryActive, discoverySequence, startDiscovery, exitDiscovery, discoveryEngagement,
   } = useGraphStore();
 
   // True when File System Access API is available (Chrome/Edge 86+)
@@ -210,7 +212,7 @@ export function Header() {
       try {
         const perm = await fileHandle.requestPermission({ mode: 'readwrite' });
         if (perm !== 'granted') throw new Error('Write permission denied');
-        const payload = buildExportPayload(allNodes, viewMode, dagLayout, lanesLayout, groups, phases, tagRegistry, ownerRegistry, meta);
+        const payload = buildExportPayload(allNodes, viewMode, dagLayout, lanesLayout, groups, phases, tagRegistry, ownerRegistry, meta, discoveryEngagement);
         const writable = await fileHandle.createWritable();
         await writable.write(JSON.stringify(payload, null, 2));
         await writable.close();
@@ -218,7 +220,7 @@ export function Header() {
       } catch (err) {
         if ((err as Error).name !== 'AbortError') {
           // Permission denied or write error — fall back to download so no data is lost
-          exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, currentFileName ?? undefined, groups, phases, tagRegistry, ownerRegistry, meta);
+          exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, currentFileName ?? undefined, groups, phases, tagRegistry, ownerRegistry, meta, discoveryEngagement);
           setLastSavedAt(new Date());
         }
       }
@@ -230,7 +232,7 @@ export function Header() {
           suggestedName: currentFileName ?? 'flowgraph.json',
           types: [{ description: 'FlowGraph JSON', accept: { 'application/json': ['.json'] } }],
         });
-        const payload = buildExportPayload(allNodes, viewMode, dagLayout, lanesLayout, groups, phases, tagRegistry, ownerRegistry, meta);
+        const payload = buildExportPayload(allNodes, viewMode, dagLayout, lanesLayout, groups, phases, tagRegistry, ownerRegistry, meta, discoveryEngagement);
         const writable = await handle.createWritable();
         await writable.write(JSON.stringify(payload, null, 2));
         await writable.close();
@@ -241,23 +243,23 @@ export function Header() {
         // User cancelled the picker — do nothing (no download fallback).
         if ((err as Error).name !== 'AbortError') {
           // Unexpected error — fall back to download so no data is lost.
-          exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, currentFileName ?? undefined, groups, phases, tagRegistry, ownerRegistry, meta);
+          exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, currentFileName ?? undefined, groups, phases, tagRegistry, ownerRegistry, meta, discoveryEngagement);
           setLastSavedAt(new Date());
         }
       }
     } else {
       // Last resort: browser doesn't support File System Access API.
-      exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, currentFileName ?? undefined, groups, phases, tagRegistry, ownerRegistry, meta);
+      exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, currentFileName ?? undefined, groups, phases, tagRegistry, ownerRegistry, meta, discoveryEngagement);
       setLastSavedAt(new Date());
     }
-  }, [fileHandle, viewMode, positions, transform, layoutCache, allNodes, currentFileName, setFileHandle, setCurrentFileName, groups, phases, tagRegistry, ownerRegistry, meta]);
+  }, [fileHandle, viewMode, positions, transform, layoutCache, allNodes, currentFileName, setFileHandle, setCurrentFileName, groups, phases, tagRegistry, ownerRegistry, meta, discoveryEngagement]);
 
   // ── Save As — pick a new file path, write, and update the handle ────────
   const handleSaveAs = useCallback(async () => {
     setSaveMenuOpen(false);
     const dagLayout   = viewMode === 'dag'   ? { positions, transform } : (layoutCache['dag']   ?? null);
     const lanesLayout = viewMode === 'lanes' ? { positions, transform } : (layoutCache['lanes'] ?? null);
-    const payload = buildExportPayload(allNodes, viewMode, dagLayout, lanesLayout, groups, phases, tagRegistry, ownerRegistry, meta);
+    const payload = buildExportPayload(allNodes, viewMode, dagLayout, lanesLayout, groups, phases, tagRegistry, ownerRegistry, meta, discoveryEngagement);
     const json = JSON.stringify(payload, null, 2);
 
     if (window.showSaveFilePicker) {
@@ -282,11 +284,11 @@ export function Header() {
       const name = window.prompt('Enter a filename for the saved file:', currentFileName ?? 'flowgraph.json');
       if (!name) return;
       const safeName = name.endsWith('.json') ? name : `${name}.json`;
-      exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, safeName, groups, phases, tagRegistry, ownerRegistry, meta);
+      exportGraphToJson(allNodes, viewMode, dagLayout, lanesLayout, safeName, groups, phases, tagRegistry, ownerRegistry, meta, discoveryEngagement);
       setCurrentFileName(safeName);
       setLastSavedAt(new Date());
     }
-  }, [viewMode, positions, transform, layoutCache, allNodes, currentFileName, setFileHandle, setCurrentFileName, groups, phases, tagRegistry, ownerRegistry, meta]);
+  }, [viewMode, positions, transform, layoutCache, allNodes, currentFileName, setFileHandle, setCurrentFileName, groups, phases, tagRegistry, ownerRegistry, meta, discoveryEngagement]);
 
   // ── Reload from file — re-read via fileHandle and restore saved state ───
   const handleReloadFromFile = useCallback(async () => {
@@ -422,6 +424,27 @@ export function Header() {
   function handleDesignToggle() {
     setDesignMode(!designMode);
   }
+
+  // ── Discover / Cinema ─────────────────────────────────────────────────
+  function handleDiscover() {
+    if (discoveryActive) {
+      exitDiscovery();
+      return;
+    }
+    if (designMode) setDesignMode(false);
+    const edges = allNodes.flatMap((n) =>
+      n.dependencies.map((dep) => ({ from: dep, to: n.id }))
+    );
+    const sequence = buildTourSequence(allNodes, edges, phases, groups);
+    startDiscovery(sequence);
+  }
+
+  // Label shows estimated time when a sequence has already been built
+  const discoverLabel = discoveryActive
+    ? 'Exit Tour'
+    : discoverySequence && discoverySequence.estimatedMinutes > 0
+      ? `Discover · ~${discoverySequence.estimatedMinutes} min`
+      : 'Discover';
 
   const hasData = allNodes.length > 0;
 
@@ -704,18 +727,36 @@ export function Header() {
           </div>
         )}
 
-        {/* Design mode toggle */}
-        <button
-          className={`${styles.btnDesign} ${designMode ? styles.btnDesignActive : ''}`}
-          title="Toggle Design Mode — add nodes, draw connections, edit graph"
-          onClick={handleDesignToggle}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 20h9"/>
-            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
-          </svg>
-          <span className={styles.btnLabel}>Design</span>
-        </button>
+        {/* Discover — Process Cinema guided tour — hidden in design mode */}
+        {!designMode && (
+          <button
+            className={`${styles.btnDiscover} ${discoveryActive ? styles.btnDiscoverActive : ''}`}
+            title={discoveryActive ? 'Exit the Process Cinema tour' : 'Discover — guided story tour of this graph\'s structure'}
+            onClick={handleDiscover}
+            disabled={!hasData}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10"/>
+              <polygon points="10,8 16,12 10,16" fill="currentColor" stroke="none"/>
+            </svg>
+            <span className={styles.btnLabel}>{discoverLabel}</span>
+          </button>
+        )}
+
+        {/* Design mode toggle — hidden in cinema mode */}
+        {!discoveryActive && (
+          <button
+            className={`${styles.btnDesign} ${designMode ? styles.btnDesignActive : ''}`}
+            title="Toggle Design Mode — add nodes, draw connections, edit graph"
+            onClick={handleDesignToggle}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 20h9"/>
+              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+            </svg>
+            <span className={styles.btnLabel}>Design</span>
+          </button>
+        )}
 
         {/* Auto-space — resolve overlapping nodes/groups */}
         <button

@@ -42,6 +42,13 @@ export interface GraphNode {
   dependencies: string[];
   /** Optional tags for categorising or flagging the node. Each tag has a label and a color. */
   tags?: NodeTag[];
+  // ── Cinema author fields ──────────────────────────────────────────────────
+  /** Author-written narration body; overrides auto-generated body verbatim */
+  cinemaScript?: string;
+  /** When true, forces this node to render as a bottleneck scene in cinema */
+  cinemaBottleneck?: boolean;
+  /** When true, this node is excluded from the cinema pipeline entirely */
+  cinemaSkip?: boolean;
 }
 
 /**
@@ -137,6 +144,21 @@ export interface SavedLayout {
   viewMode: ViewMode;
   /** The full layout snapshot (positions + transform) */
   snapshot: LayoutSnapshot;
+}
+
+/**
+ * OwnerFocusSnapshot — the graph state captured immediately before entering owner focus mode.
+ * Stored so we can restore the exact pre-focus layout when the user exits owner focus.
+ */
+export interface OwnerFocusSnapshot {
+  /** The activeOwners set before owner focus was entered */
+  activeOwners: Set<string>;
+  /** Node positions before owner focus was entered */
+  positions: Record<string, Position>;
+  /** Lane metrics before owner focus was entered */
+  laneMetrics: Record<string, LaneMetrics>;
+  /** Viewport transform before owner focus was entered */
+  transform: Transform;
 }
 
 /**
@@ -277,4 +299,77 @@ export interface GraphGroup {
   childGroupIds: string[];
   /** When true the group is rendered as a collapsed polygon on the canvas */
   collapsed: boolean;
+  // ── Cinema author fields ──────────────────────────────────────────────────
+  /** Author-written narration body; overrides auto-generated body verbatim */
+  cinemaScript?: string;
+  /** When true, forces this group to render as a bottleneck scene in cinema */
+  cinemaBottleneck?: boolean;
+  /** When true, this group is excluded from the cinema pipeline entirely */
+  cinemaSkip?: boolean;
 }
+
+// ─── CINEMA TYPES ─────────────────────────────────────────────────────────────
+
+/**
+ * The visual role a scene plays in the cinema narrative.
+ * Determines template, reading time weight, and prediction gate eligibility.
+ */
+export type CinemaSceneType =
+  | 'genesis'      // all roots grouped into one opening scene
+  | 'terminal'     // all sinks grouped into one closing scene
+  | 'fork'         // outDegree >= 2; process splits into parallel paths
+  | 'bottleneck'   // inDegree >= 2 AND on critical path; convergence under pressure
+  | 'convergence'  // inDegree >= 2 NOT on critical path; has slack
+  | 'bridge'       // first node entering a new phase (phase-override mode only)
+  | 'reveal'       // everything else; standard narrative scene
+  | 'parallel'     // sibling-compressed group of same-depth, same-parent nodes
+  | 'prediction';  // interactive gate; locked until the user answers
+
+/** One option in a prediction gate question. */
+export interface CinemaPredictionOption {
+  id: string;
+  text: string;
+  isCorrect: boolean;
+  /** Shown after the user selects this option — explains why it is right or wrong. */
+  feedback: string;
+}
+
+/** An interactive prediction gate embedded between narrative scenes. */
+export interface CinemaPredictionGate {
+  question: string;
+  options: CinemaPredictionOption[];
+}
+
+/** A single scene in the cinema sequence. */
+export interface CinemaScene {
+  type: CinemaSceneType;
+  act: 1 | 2 | 3;
+  /** Primary node(s) for this scene. Parallel scenes list all grouped nodes. */
+  nodeIds: string[];
+  headline: string;
+  body: string;
+  /** Structural insight. Omitted for simple reveal scenes without critical-path membership. */
+  insight?: string;
+  /** Ids of the shared parents for a parallel group scene. */
+  parentIds?: string[];
+  /** Ids of the convergence nodes that follow a parallel group. */
+  convergenceIds?: string[];
+  /** Present only on prediction scenes. */
+  prediction?: CinemaPredictionGate;
+  /** Pre-computed reading time in seconds (from READING_TIME_WEIGHTS in cinema.ts). */
+  readingTimeSeconds: number;
+}
+
+/** The complete output of buildTourSequence(). */
+export interface CinemaSequence {
+  scenes: CinemaScene[];
+  /** Total estimated viewing time, rounded to the nearest 0.5 min. */
+  estimatedMinutes: number;
+  /** Scene indices where Act II and Act III begin. */
+  actBoundaries: { act2Start: number; act3Start: number };
+  /** True when phase coverage was >= 30% and phase order drove act assignment. */
+  usedPhaseOverride: boolean;
+}
+
+/** Normalized engagement score stored per nodeId after a cinema session. */
+export type CinemaEngagementMap = Record<string, number>;

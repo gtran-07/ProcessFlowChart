@@ -25,10 +25,12 @@ interface EdgeLayerProps {
   ownerColors: Record<string, string>;
   nodes: GraphNode[];
   groups: GraphGroup[];
+  ownerFocusSets?: { ownedIds: Set<string>; upstreamIds: Set<string>; downstreamIds: Set<string> } | null;
+  focusedOwner?: string | null;
 }
 
-export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes, groups }: EdgeLayerProps) {
-  const { hoveredNodeId, deleteEdge, viewMode, designTool, multiSelectIds, selectedNodeId, selectedGroupId } = useGraphStore();
+export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes, groups, ownerFocusSets, focusedOwner }: EdgeLayerProps) {
+  const { hoveredNodeId, deleteEdge, viewMode, designTool, multiSelectIds, selectedNodeId, selectedGroupId, discoveryActive, discoveryRoleMap } = useGraphStore();
 
   /**
    * Resolve the effective position for an edge endpoint.
@@ -140,6 +142,70 @@ export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes, gr
           opacity = 0.45; // static — does not change on hover, no tile repaint triggered
         }
 
+        // Discovery mode: highlight edges touching focus/danger/lit nodes; ghost everything else.
+        // This overrides all other styling so the narrative path is visually clear.
+        if (discoveryActive) {
+          // Check both the actual node ID and the collapsed group ID (groups can appear in scenes)
+          const fromRole = discoveryRoleMap[edge.from] ?? (fromGroup ? discoveryRoleMap[fromGroup.id] : undefined) ?? 'ghost';
+          const toRole   = discoveryRoleMap[edge.to]   ?? (toGroup   ? discoveryRoleMap[toGroup.id]   : undefined) ?? 'ghost';
+
+          const isFocusEdge = fromRole === 'focus' || fromRole === 'danger' || toRole === 'focus' || toRole === 'danger';
+          const isLitEdge   = !isFocusEdge && (fromRole === 'lit' || toRole === 'lit');
+
+          if (isFocusEdge) {
+            strokeColor = highlightColor;
+            strokeWidth = 2.5;
+            opacity = 1;
+            strokeDasharray = undefined;
+            markerEnd = 'url(#arrow-dyn)';
+          } else if (isLitEdge) {
+            strokeColor = highlightColor;
+            strokeWidth = 1.8;
+            opacity = 0.45;
+            strokeDasharray = undefined;
+            markerEnd = 'url(#arrow-dyn)';
+          } else {
+            strokeColor = 'var(--border2)';
+            strokeWidth = 1.5;
+            opacity = 0.07;
+            strokeDasharray = undefined;
+            markerEnd = 'url(#arrow)';
+          }
+        }
+
+        // Owner focus mode: color upstream→owned edges blue, owned→downstream edges amber,
+        // and ghost all other edges to near-invisible. Overrides cross-lane dimming.
+        if (ownerFocusSets && focusedOwner && !isHighlighted) {
+          const fromOwned = ownerFocusSets.ownedIds.has(edge.from);
+          const toOwned = ownerFocusSets.ownedIds.has(edge.to);
+          const fromUpstream = ownerFocusSets.upstreamIds.has(edge.from);
+          const toDownstream = ownerFocusSets.downstreamIds.has(edge.to);
+
+          if (fromOwned && toOwned) {
+            // owned → owned: full opacity, neutral color
+            opacity = 1;
+            strokeDasharray = undefined;
+          } else if (fromUpstream && toOwned) {
+            // upstream → owned: blue
+            strokeColor = '#4f9eff';
+            strokeWidth = 2;
+            opacity = 1;
+            strokeDasharray = undefined;
+            markerEnd = 'url(#arrow-dyn)';
+          } else if (fromOwned && toDownstream) {
+            // owned → downstream: amber
+            strokeColor = '#f5a623';
+            strokeWidth = 2;
+            opacity = 1;
+            strokeDasharray = undefined;
+            markerEnd = 'url(#arrow-dyn)';
+          } else {
+            // unrelated edge: ghost
+            opacity = 0.05;
+            strokeDasharray = undefined;
+          }
+        }
+
         function handleEdgeMouseEnter(e: React.MouseEvent) {
           if (!designMode || designTool !== 'connect') return;
           // Show the delete tooltip near the cursor
@@ -209,7 +275,7 @@ export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes, gr
               strokeDasharray={strokeDasharray}
               markerEnd={markerEnd}
               style={{
-                color: highlightColor, // Used by arrow-dyn marker via currentColor
+                color: strokeColor, // Used by arrow-dyn marker via currentColor (covers owner focus colors)
                 transition: 'stroke .15s',
                 pointerEvents: 'none', // Hit area handles events, not this path
               }}

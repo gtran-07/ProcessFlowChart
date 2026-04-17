@@ -28,6 +28,7 @@ interface GroupCardProps {
   onToggleCollapse: (id: string) => void;
   laneMetrics: Record<string, LaneMetrics>;
   viewMode: ViewMode;
+  laneFocusRole?: 'owned' | 'upstream' | 'downstream' | 'partial' | null;
 }
 
 export const GroupCard = memo(function GroupCard({
@@ -40,6 +41,7 @@ export const GroupCard = memo(function GroupCard({
   onToggleCollapse,
   laneMetrics,
   viewMode,
+  laneFocusRole,
 }: GroupCardProps) {
   const {
     selectedGroupId, multiSelectIds,
@@ -47,6 +49,7 @@ export const GroupCard = memo(function GroupCard({
     setSelectedGroup,
     toggleMultiSelect,
     saveLayoutToCache, settleAndResolve, setHoveredNode,
+    discoveryActive, discoveryRoleMap,
   } = useGraphStore();
 
   const groupRef = useRef<SVGGElement>(null);
@@ -314,14 +317,22 @@ export const GroupCard = memo(function GroupCard({
     // so clicks on child nodes/groups fall through to their own handlers.
     const HEADER_H = 38;
 
+    const laneFocusOpacityExpanded =
+      laneFocusRole === 'upstream' || laneFocusRole === 'downstream' ? 0.8
+      : laneFocusRole === 'partial' ? 0.15
+      : 1;
+
+    const discoveryRoleExpanded = discoveryActive ? (discoveryRoleMap[group.id] ?? 'ghost') : '';
+
     return (
       <g
         ref={groupRef}
-        className="group-overlay"
+        className={`group-overlay${discoveryRoleExpanded ? ` discovery-${discoveryRoleExpanded}` : ''}`}
         data-group-id={group.id}
+        data-id={group.id}
         onMouseEnter={() => { setIsLocalHovered(true); setHoveredNode(group.id); }}
         onMouseLeave={() => { setIsLocalHovered(false); setHoveredNode(null); }}
-        style={{ cursor: 'default' }}
+        style={{ cursor: 'default', opacity: discoveryActive ? undefined : laneFocusOpacityExpanded }}
       >
         {/* Selection glow — multi-selected (any mode) or selected in design mode */}
         {(isMultiSel || (isSelected && designMode)) && (
@@ -388,15 +399,24 @@ export const GroupCard = memo(function GroupCard({
     group.owners.length === 1 ? group.owners[0] :
     `${group.owners.length} owners`;
 
+  const collapsedFocusOpacity =
+    laneFocusRole === 'upstream' || laneFocusRole === 'downstream' ? 0.8
+    : laneFocusRole === 'partial' ? 0.15
+    : 1;
+
+  const discoveryRoleCollapsed = discoveryActive ? (discoveryRoleMap[group.id] ?? 'ghost') : '';
+
   return (
     <g
       ref={groupRef}
       // Use node-group class so CSS hover/dim effects work the same as nodes
-      className={`node-group${isSelected ? ' node-selected-group' : ''}${isMultiSel ? ' node-jumped' : ''}`}
+      className={`node-group${isSelected ? ' node-selected-group' : ''}${isMultiSel ? ' node-jumped' : ''}${discoveryRoleCollapsed ? ` discovery-${discoveryRoleCollapsed}` : ''}`}
       data-group-id={group.id}
+      data-id={group.id}
       style={{
         cursor: 'grab',
         transform: `translate(${position.x}px,${position.y}px)`,
+        opacity: discoveryActive ? undefined : collapsedFocusOpacity,
       }}
       onMouseDown={handleMouseDown}
       onClick={handleClick}
