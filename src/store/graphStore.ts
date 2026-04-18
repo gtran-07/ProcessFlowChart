@@ -171,6 +171,8 @@ export interface GraphStore {
   fadingOutPositions: Record<string, Position>;
   /** Node IDs fading in after their owner was toggled on */
   fadingInNodeIds: string[];
+  /** When true, node and edge entrance animations are skipped for the next mount cycle */
+  suppressEntranceAnimation: boolean;
 
   /** Name of the currently-loaded JSON file, or null if no file is loaded */
   currentFileName: string | null;
@@ -561,6 +563,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   fadingOutNodeIds: [],
   fadingOutPositions: {},
   fadingInNodeIds: [],
+  suppressEntranceAnimation: false,
   currentFileName: null,
   fileHandle: null,
   clipboard: [],
@@ -1043,6 +1046,9 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     const state = get();
     if (mode === state.viewMode) return;
 
+    set({ suppressEntranceAnimation: true });
+    setTimeout(() => set({ suppressEntranceAnimation: false }), 100);
+
     // Only persist/restore the layout cache when NOT in focus mode.
     // Focus mode shows a subgraph — saving those positions would corrupt the full-graph cache,
     // and restoring a full-graph cache while in focus would cause a nodes/positions mismatch.
@@ -1342,7 +1348,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       visibleNodes, visibleEdges, state.viewMode, state.activeOwners, state.allNodes
     );
 
-    set({ focusMode: true, focusNodeId: nodeId, preFocusSnapshot, visibleNodes, visibleEdges, positions, laneMetrics });
+    set({ focusMode: true, focusNodeId: nodeId, hoveredNodeId: null, preFocusSnapshot, visibleNodes, visibleEdges, positions, laneMetrics });
   },
 
   // ── exitFocusMode ─────────────────────────────────────────────────────────
@@ -1368,6 +1374,8 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       set({
         focusMode: false,
         focusNodeId: null,
+        hoveredNodeId: null,
+        selectedNodeId: null,
         preFocusSnapshot: null,
         visibleNodes,
         visibleEdges,
@@ -1377,7 +1385,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       });
     } else {
       // View mode changed while in focus — discard snapshot, rebuild fresh.
-      set({ focusMode: false, focusNodeId: null, preFocusSnapshot: null });
+      set({ focusMode: false, focusNodeId: null, hoveredNodeId: null, selectedNodeId: null, preFocusSnapshot: null });
       get().rebuildGraph();
       setTimeout(() => get().fitToScreen(), 60);
     }
@@ -1444,6 +1452,9 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       visibleNodes, visibleEdges, state.viewMode, connectedOwners, state.allNodes
     );
 
+    set({ suppressEntranceAnimation: true });
+    setTimeout(() => set({ suppressEntranceAnimation: false }), 100);
+
     set({
       focusedOwner: owner,
       preLaneFocusSnapshot,
@@ -1470,6 +1481,9 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     const { visibleNodes, visibleEdges } = deriveVisibility(
       state.allNodes, state.allEdges, snap.activeOwners, false, null, state.groups
     );
+
+    set({ suppressEntranceAnimation: true });
+    setTimeout(() => set({ suppressEntranceAnimation: false }), 100);
 
     set({
       focusedOwner: null,

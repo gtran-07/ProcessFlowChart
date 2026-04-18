@@ -29,9 +29,11 @@ interface NodeCardProps {
   laneFocusRole?: 'owned' | 'upstream' | 'downstream' | 'partial' | null;
   fadingOut?: boolean;
   fadingIn?: boolean;
+  entranceDelay?: number;
+  animate?: boolean;
 }
 
-export const NodeCard = memo(function NodeCard({ node, position, color, screenToSvg, onFocusRequest, laneFocusRole, fadingOut, fadingIn }: NodeCardProps) {
+export const NodeCard = memo(function NodeCard({ node, position, color, screenToSvg, onFocusRequest, laneFocusRole, fadingOut, fadingIn, entranceDelay, animate = true }: NodeCardProps) {
   const {
     selectedNodeId, lastJumpedNodeId,
     designMode, designTool, connectSourceId,
@@ -40,6 +42,10 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
     discoveryActive, discoveryPhase, discoveryRoleMap, discoveryVisited, heatTiers,
     selectedReconstructionChip, selectReconstructionChip, recordReconstructionAttempt,
   } = useGraphStore();
+
+  // Capture animate at mount time only — ignore later prop changes so that
+  // clearing the suppression flag on a subsequent render doesn't re-trigger the animation.
+  const animateOnMount = useRef(animate);
 
   const groupRef = useRef<SVGGElement>(null);
 
@@ -388,6 +394,7 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
       onMouseEnter={() => { setIsLocalHovered(true); setHoveredNode(node.id); }}
       onMouseLeave={() => { setIsLocalHovered(false); setHoveredNode(null); }}
     >
+      <g className={animateOnMount.current ? 'node-entrance' : undefined} style={{ '--entrance-delay': `${entranceDelay ?? 0}ms` } as React.CSSProperties}>
       {/* Drop shadow — plain rect, no blur filter (blur triggers GPU recomposition on opacity transitions, causing flicker) */}
       <rect x={3} y={5} width={NODE_W} height={NODE_H} rx={6}
         fill="rgba(0,0,0,0.22)" />
@@ -512,6 +519,7 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
           </g>
         );
       })()}
+      </g>
     </g>
   );
 });

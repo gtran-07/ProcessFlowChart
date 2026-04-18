@@ -1,0 +1,22 @@
+# Build output
+dist/
+
+# Dependencies
+node_modules/
+
+# Sample and plan files (large, not needed for coding)
+Sample Files/
+plans/
+
+# Lock files
+*.lock
+package-lock.json
+
+# Logs
+*.log
+
+# Source maps
+**/*.map
+
+# Sample data (large JSON, not source code)
+public/samples/

@@ -260,16 +260,98 @@ body {
 }
 
 /**
- * graphFadeIn — applied to #graph-content which wraps all lanes, edges, and nodes.
- * Triggered on every view/focus-mode switch by changing the React key on the element.
- * Using a wrapper group (not individual nodes) means edges animate in too.
+ * Entrance animations — staggered left-to-right by DAG column, top-to-bottom within each column.
+ * Applied via .node-entrance inner <g> inside NodeCard / collapsed GroupCard.
+ * Applied via .group-entrance-expand inner <g> inside expanded GroupCard.
+ * --entrance-delay is set inline: (columnIndex × 120ms) + (yRank × 30ms).
+ * Edges draw out from source via stroke-dashoffset in EdgeLayer.useLayoutEffect.
+ *
+ * All entrance keyframes and classes live inside prefers-reduced-motion: no-preference
+ * so users who prefer reduced motion get instant appearance. The fallback rules below
+ * ensure instant visibility by default (opacity:1, no transform offset).
  */
-@keyframes graphFadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+
+/* Reduced motion fallback — nodes/groups appear instantly with no animation */
+.node-entrance,
+.group-entrance-expand {
+  opacity: 1;
 }
-#graph-content {
-  animation: graphFadeIn 0.3s ease;
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes nodeEnterFromLeft {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  /* Expanded group bounding boxes: opacity only — no translate (boxes can span many columns) */
+  @keyframes groupEntranceExpand {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  /* Edge draw-on: stroke-dashoffset from full path length to 0.
+     --path-length is set per element by EdgeLayer.useLayoutEffect. */
+  @keyframes edgeDrawOn {
+    from { stroke-dashoffset: var(--path-length); }
+    to   { stroke-dashoffset: 0; }
+  }
+
+  .node-entrance {
+    animation: nodeEnterFromLeft 400ms ease-out both;
+    animation-delay: var(--entrance-delay, 0ms);
+  }
+
+  .group-entrance-expand {
+    animation: groupEntranceExpand 400ms ease-out both;
+    animation-delay: var(--entrance-delay, 0ms);
+  }
+}
+
+/* Suppress node/group entrance animations and position transitions on view-mode switch,
+   owner-focus transitions, and focus-mode exit. .suppress-entrance is set on
+   #graph-content by Canvas.tsx for one render cycle. */
+.suppress-entrance .node-entrance,
+.suppress-entrance .group-entrance-expand {
+  animation: none !important;
+}
+/* Kill the transform transition so freshly-mounted nodes don't slide in from their
+   initial computed transform (browsers animate from transform:none → final position
+   when an element mounts with a CSS transition already on it). */
+.suppress-entrance .node-group,
+.suppress-entrance .group-overlay {
+  transition: none !important;
+}
+
+/* Edge glow during draw animation — class added by JS (rm guard ensures this
+   never applies for reduced-motion users). Placed outside the no-preference
+   media query so it is not silently gated by a mis-matched media feature. */
+.edge-vis.edge-drawing {
+  stroke: var(--edge-owner-color, var(--accent));
+  stroke-width: 2;
+  opacity: 1;
+  marker-end: none;
+  filter: drop-shadow(0 0 4px var(--edge-owner-color, var(--accent))) drop-shadow(0 0 10px var(--edge-owner-color, var(--accent)));
+}
+
+/* Laser sweep on highlighted edges. A short beam (80px) travels along the full
+   connector with a 900px gap — large enough that only one beam is visible at a
+   time on any connector in the graph. Duration 1.5s gives a fast-but-readable
+   laser shot speed (~650px/s). */
+@keyframes laserSweep {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: -980; }
+}
+
+.edge-laser {
+  stroke-dasharray: 80 900;
+  stroke-linecap: round;
+  animation: laserSweep 1.5s linear infinite;
+  filter: drop-shadow(0 0 3px currentColor) drop-shadow(0 0 8px currentColor);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .edge-laser { animation: none; stroke-dasharray: none; }
 }
 
 /* ─── NODE / GROUP MOVEMENT ANIMATION ───────────────────────────────────────

@@ -29,6 +29,8 @@ interface GroupCardProps {
   laneMetrics: Record<string, LaneMetrics>;
   viewMode: ViewMode;
   laneFocusRole?: 'owned' | 'upstream' | 'downstream' | 'partial' | null;
+  entranceDelay?: number;
+  animate?: boolean;
 }
 
 export const GroupCard = memo(function GroupCard({
@@ -42,6 +44,8 @@ export const GroupCard = memo(function GroupCard({
   laneMetrics,
   viewMode,
   laneFocusRole,
+  entranceDelay,
+  animate = true,
 }: GroupCardProps) {
   const {
     selectedGroupId, multiSelectIds,
@@ -51,6 +55,8 @@ export const GroupCard = memo(function GroupCard({
     saveLayoutToCache, settleAndResolve, setHoveredNode,
     discoveryActive, discoveryRoleMap,
   } = useGraphStore();
+
+  const animateOnMount = useRef(animate);
 
   const groupRef = useRef<SVGGElement>(null);
 
@@ -334,6 +340,7 @@ export const GroupCard = memo(function GroupCard({
         onMouseLeave={() => { setIsLocalHovered(false); setHoveredNode(null); }}
         style={{ cursor: 'default', opacity: discoveryActive ? undefined : laneFocusOpacityExpanded }}
       >
+        <g className={animateOnMount.current ? 'group-entrance-expand' : undefined} style={{ '--entrance-delay': `${entranceDelay ?? 0}ms` } as React.CSSProperties}>
         {/* Selection glow — multi-selected (any mode) or selected in design mode */}
         {(isMultiSel || (isSelected && designMode)) && (
           <rect
@@ -401,6 +408,7 @@ export const GroupCard = memo(function GroupCard({
           style={{ cursor: 'pointer', userSelect: 'none' }}
           onClick={(e) => { e.stopPropagation(); onToggleCollapse(group.id); }}
         >⊟</text>
+        </g>
       </g>
     );
   }
@@ -437,6 +445,7 @@ export const GroupCard = memo(function GroupCard({
       onMouseEnter={() => { setIsLocalHovered(true); setHoveredNode(group.id); }}
       onMouseLeave={() => { setIsLocalHovered(false); setHoveredNode(null); }}
     >
+      <g className={animateOnMount.current ? 'node-entrance' : undefined} style={{ '--entrance-delay': `${entranceDelay ?? 0}ms` } as React.CSSProperties}>
       {/* Drop shadow — no blur filter (blur inside an opacity-animated group causes GPU flicker) */}
       <polygon
         points={computePolygonPoints(3, 5, GROUP_R + 2, sides)}
@@ -521,6 +530,7 @@ export const GroupCard = memo(function GroupCard({
         style={{ cursor: 'pointer', userSelect: 'none' }}
         onClick={(e) => { e.stopPropagation(); onToggleCollapse(group.id); }}
       >⊞</text>
+      </g>
     </g>
   );
 });

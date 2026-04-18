@@ -15,7 +15,7 @@ const TOOL_HINTS: Record<DesignTool, string> = {
 
 export function DesignToolbar() {
   const {
-    designTool, setDesignTool,
+    designTool, setDesignTool, setDesignMode,
     selectedNodeId, selectedGroupId,
     undoStack, redoStack, undo, redo,
     multiSelectIds, clearMultiSelect, groups,
@@ -246,6 +246,15 @@ export function DesignToolbar() {
           ? `${multiSelectIds.length} item${multiSelectIds.length !== 1 ? 's' : ''} selected — Shift+click to add more, then click ⬡ Group`
           : TOOL_HINTS[designTool]}
       </span>
+
+      <div style={{ flex: 1 }} />
+
+      <button
+        className={styles.toolBtn}
+        onClick={() => setDesignMode(false)}
+        title="Exit Design Mode"
+        style={{ border: 'none', background: 'none', color: '#f87171' }}
+      >✕</button>
     </div>
   );
 }

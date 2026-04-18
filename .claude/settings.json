@@ -1,10 +1,43 @@
 {
+  "model": "sonnet",
+  "env": {
+    "MAX_THINKING_TOKENS": "10000",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "haiku"
+  },
   "permissions": {
     "allow": [
       "Bash(grep -n \"HEADER_H\\\\|const HEADER_H\" src/components/Canvas/*.tsx)",
       "Read(//c/Users/gtran/.claude/projects/c--Users-gtran-OneDrive---Brock-Solutions--Inc-Documents-Tool-flowgraph/00d873f3-5efc-4a1d-a863-769e33529c87/tool-results/**)",
       "Bash(xargs grep:*)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "mcp__code-review-graph__list_repos_tool",
+      "mcp__code-review-graph__list_graph_stats_tool"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Users\\gtran\\AppData\\Roaming\\Python\\Python314\\Scripts\\code-review-graph.exe update --skip-flows",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Users\\gtran\\AppData\\Roaming\\Python\\Python314\\Scripts\\code-review-graph.exe status",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

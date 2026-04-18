@@ -12,7 +12,7 @@
  * In design mode, hovering an edge turns it red and shows a delete tooltip.
  */
 
-import React from 'react';
+import React, { useLayoutEffect, useRef } from 'react';
 import { computeEdgePath, NODE_W, NODE_H } from '../../utils/layout';
 import type { GraphEdge, GraphGroup, Position, GraphNode } from '../../types/graph';
 import { useGraphStore } from '../../store/graphStore';
@@ -27,10 +27,94 @@ interface EdgeLayerProps {
   groups: GraphGroup[];
   ownerFocusSets?: { ownedIds: Set<string>; upstreamIds: Set<string>; downstreamIds: Set<string> } | null;
   focusedOwner?: string | null;
+  suppressEntranceAnimation?: boolean;
 }
 
-export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes, groups, ownerFocusSets, focusedOwner }: EdgeLayerProps) {
+export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes, groups, ownerFocusSets, focusedOwner, suppressEntranceAnimation }: EdgeLayerProps) {
   const { hoveredNodeId, deleteEdge, viewMode, designTool, multiSelectIds, selectedNodeId, selectedGroupId, discoveryActive, discoveryPhase, discoveryRoleMap } = useGraphStore();
+
+  const rm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const containerRef = useRef<SVGGElement>(null);
+
+  // On every mount (= graph-content remount on view/focus switch or new file load),
+  // animate each edge drawing out from its source node, staggered by column.
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const COLUMN_SPACING = NODE_W + 140;  // NODE_W=180 + GAP_X=140
+    // Keep COLUMN_STAGGER in sync with Canvas.tsx nodeEntranceDelay (120ms per column).
+    const COLUMN_STAGGER = 120;           // ms per source column — matches Canvas.tsx
+    const POST_NODE_DELAY = 350;          // ms after source-column nodes begin appearing
+    const EDGE_DRAW_DUR = 300;            // ms — edge draw duration
+function finalizeEdge(path: SVGPathElement) {
+      path.classList.remove('edge-drawing');
+      const m = path.getAttribute('data-marker-end');
+      if (m) path.setAttribute('marker-end', m);
+    }
+
+    const visPaths = container.querySelectorAll<SVGPathElement>('.edge-vis');
+
+    // View-mode switch or owner-focus enter/exit: skip draw animation, show edges instantly.
+    if (suppressEntranceAnimation) {
+      visPaths.forEach((path) => finalizeEdge(path));
+      return;
+    }
+
+const anims: Animation[] = [];
+    let maxEnd = 0;
+
+    // Add edge-drawing class imperatively so React never writes it as a managed prop.
+    // If React owned it via JSX className, re-renders would restore it after finalizeEdge
+    // removes it, permanently suppressing marker-end via CSS and keeping the glow.
+    visPaths.forEach((path) => path.classList.add('edge-drawing'));
+
+    visPaths.forEach((path) => {
+      const grp = path.closest<SVGGElement>('[data-edge-from]');
+      if (!grp) return;
+      const fromId = grp.getAttribute('data-edge-from') ?? '';
+      const fromPos = positions[fromId];
+      const col = fromPos ? Math.max(0, Math.round(fromPos.x / COLUMN_SPACING)) : 0;
+      const delay = col * COLUMN_STAGGER + POST_NODE_DELAY;
+      const length = path.getTotalLength();
+      if (length === 0) return;
+
+      // Set initial state via inline style so the path is invisible until animation starts.
+      // Inline style overrides React's SVG presentation attribute (set via JSX strokeDasharray).
+      path.style.strokeDasharray = `${length}`;
+      path.style.strokeDashoffset = `${length}`;
+
+      const anim = path.animate(
+        [{ strokeDashoffset: `${length}` }, { strokeDashoffset: '0' }],
+        { duration: EDGE_DRAW_DUR, delay, fill: 'forwards', easing: 'ease-out' },
+      );
+      anim.finished.then(() => {
+        finalizeEdge(path);
+      }).catch(() => {});
+      anims.push(anim);
+      maxEnd = Math.max(maxEnd, delay + EDGE_DRAW_DUR);
+    });
+
+    // After all animations finish, remove inline styles so React's JSX values
+    // (e.g. strokeDasharray="5 4" for cross-lane edges) take effect normally.
+    const cleanup = setTimeout(() => {
+      visPaths.forEach((path) => {
+        finalizeEdge(path);
+        path.style.strokeDasharray = '';
+        path.style.strokeDashoffset = '';
+      });
+    }, maxEnd + 50);
+
+    return () => {
+      clearTimeout(cleanup);
+      anims.forEach((a) => a.cancel());
+      visPaths.forEach((path) => {
+        finalizeEdge(path);
+        path.style.strokeDasharray = '';
+        path.style.strokeDashoffset = '';
+      });
+    };
+  }, []); // empty deps — fires only on mount, which happens each time graph-content remounts
 
   /**
    * Resolve the effective position for an edge endpoint.
@@ -60,7 +144,7 @@ export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes, gr
   nodes.forEach((node) => { nodeOwnerMap[node.id] = node.owner; });
 
   return (
-    <>
+    <g ref={containerRef}>
       {edges.map((edge) => {
         const fromPos = effectiveFromPos(edge.from);
         const toPos = effectiveToPos(edge.to);
@@ -77,11 +161,8 @@ export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes, gr
         // Cross-lane edges are rendered dashed and dimmed in LANES view
         const isCrossLane = viewMode === 'lanes' && nodeOwnerMap[edge.from] !== nodeOwnerMap[edge.to];
 
-        // Determine edge highlight state based on hovered node or group,
-        // OR any node/group in the current multi-selection.
-        // When hovering/selecting a group, any edge crossing the group boundary is highlighted.
-        let isHighlighted = false;
-
+        // isHoverHighlighted — edge touches the currently hovered node/group (laser animation)
+        // isHighlighted      — edge touches hover OR selection (color/width boost, no laser)
         const state = useGraphStore.getState();
 
         function edgeTouchesId(id: string): boolean {
@@ -103,18 +184,15 @@ export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes, gr
           );
         }
 
-        if (hoveredNodeId) {
-          isHighlighted = edgeTouchesId(hoveredNodeId);
-        }
+        const isHoverHighlighted = !!hoveredNodeId && edgeTouchesId(hoveredNodeId);
 
+        let isHighlighted = isHoverHighlighted;
         if (!isHighlighted && multiSelectIds.length > 0) {
           isHighlighted = multiSelectIds.some(edgeTouchesId);
         }
-
         if (!isHighlighted && selectedNodeId) {
           isHighlighted = edgeTouchesId(selectedNodeId);
         }
-
         if (!isHighlighted && selectedGroupId) {
           isHighlighted = edgeTouchesId(selectedGroupId);
         }
@@ -273,17 +351,33 @@ export function EdgeLayer({ edges, positions, designMode, ownerColors, nodes, gr
               strokeWidth={strokeWidth}
               opacity={opacity}
               strokeDasharray={strokeDasharray}
-              markerEnd={markerEnd}
+              markerEnd={rm ? markerEnd : undefined}
+              data-marker-end={rm ? undefined : markerEnd}
               style={{
                 color: strokeColor, // Used by arrow-dyn marker via currentColor (covers owner focus colors)
+                ['--edge-owner-color' as string]: highlightColor,
                 transition: 'stroke .15s',
                 pointerEvents: 'none', // Hit area handles events, not this path
               }}
             />
+            {/* Laser sweep overlay — only on hover-highlighted edges, not for reduced-motion users */}
+            {isHoverHighlighted && !rm && (
+              <path
+                className="edge-laser"
+                d={pathD}
+                fill="none"
+                stroke={highlightColor}
+                strokeWidth={2}
+                style={{
+                  color: highlightColor, // feeds currentColor in the CSS glow filter
+                  pointerEvents: 'none',
+                }}
+              />
+            )}
           </g>
         );
       })}
-    </>
+    </g>
   );
 }
 

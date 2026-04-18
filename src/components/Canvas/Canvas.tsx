@@ -12,51 +12,170 @@
  * What does NOT belong here: individual node rendering (NodeCard), edge path calculation (layout.ts).
  */
 
-import React, { useRef, useCallback, useEffect, useState, useMemo } from 'react';
-import { useGraphStore } from '../../store/graphStore';
-import type { Transform } from '../../types/graph';
-import { NodeCard } from './NodeCard';
-import { GroupCard } from './GroupCard';
-import { EdgeLayer } from './EdgeLayer';
-import { LaneLayer } from './LaneLayer';
-import { MiniMap } from './MiniMap';
-import { GhostEdge } from './GhostEdge';
-import { PhaseLayer } from './PhaseLayer';
-import { PhaseNavigator } from './PhaseNavigator';
-import { PhaseCrowns } from './PhaseCrowns';
-import { LaneCrowns } from './LaneCrowns';
-import { OwnerFocusBar } from './OwnerFocusBar';
-import { PhaseHoverCard } from './PhaseHoverCard';
-import type { CrownBand } from './PhaseCrowns';
-import { NODE_W, LANE_LABEL_W, computePhaseAdjustedPositions } from '../../utils/layout';
-import { DesignToolbar } from '../DesignMode/DesignToolbar';
+import React, {
+  useRef,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useState,
+  useMemo,
+} from "react";
+import { useGraphStore } from "../../store/graphStore";
+import type { Transform } from "../../types/graph";
+import { NodeCard } from "./NodeCard";
+import { GroupCard } from "./GroupCard";
+import { EdgeLayer } from "./EdgeLayer";
+import { LaneLayer } from "./LaneLayer";
+import { MiniMap } from "./MiniMap";
+import { GhostEdge } from "./GhostEdge";
+import { PhaseLayer } from "./PhaseLayer";
+import { PhaseNavigator } from "./PhaseNavigator";
+import { PhaseCrowns } from "./PhaseCrowns";
+import { LaneCrowns } from "./LaneCrowns";
+import { OwnerFocusBar } from "./OwnerFocusBar";
+import { PhaseHoverCard } from "./PhaseHoverCard";
+import type { CrownBand } from "./PhaseCrowns";
+import {
+  NODE_W,
+  GAP_X,
+  LANE_LABEL_W,
+  computePhaseAdjustedPositions,
+} from "../../utils/layout";
+import { DesignToolbar } from "../DesignMode/DesignToolbar";
 import {
   computeGroupNestLevel,
   getAllDescendantNodeIds,
   getHiddenGroupIds,
   getCollapsedGroupForNode,
-} from '../../utils/grouping';
-import styles from './Canvas.module.css';
+} from "../../utils/grouping";
+import styles from "./Canvas.module.css";
 
 export function Canvas() {
   const {
-    visibleNodes, visibleEdges, positions, transform,
-    setTransform, saveLayoutToCache, flyTarget, clearFlyTarget,
-    focusMode, focusNodeId, exitFocusMode,
-    designMode, designTool, connectSourceId, setConnectSource,
-    addEdge, addNode, setSelectedNode,
-    allNodes, allEdges, ownerColors, laneMetrics, viewMode,
-    enterFocusMode, hoveredNodeId, fitToScreen, clearGraph, pathHighlightNodeId,
-    selectedNodeId, selectedGroupId, deleteNode, deleteGroup,
-    multiSelectIds, copySelection, pasteClipboard,
-    groups, toggleGroupCollapse, clearMultiSelect,
-    phases, focusedPhaseId, selectedPhaseId, setFocusedPhaseId, setSelectedPhaseId,
-    collapsedPhaseIds, togglePhaseCollapse, collapseAllPhases, expandAllPhases,
-    focusedOwner, enterOwnerFocus, exitOwnerFocus,
+    visibleNodes,
+    visibleEdges,
+    positions,
+    transform,
+    setTransform,
+    saveLayoutToCache,
+    flyTarget,
+    clearFlyTarget,
+    focusMode,
+    focusNodeId,
+    exitFocusMode,
+    designMode,
+    designTool,
+    connectSourceId,
+    setConnectSource,
+    addEdge,
+    addNode,
+    setSelectedNode,
+    allNodes,
+    allEdges,
+    ownerColors,
+    laneMetrics,
+    viewMode,
+    enterFocusMode,
+    hoveredNodeId,
+    fitToScreen,
+    clearGraph,
+    pathHighlightNodeId,
+    selectedNodeId,
+    selectedGroupId,
+    deleteNode,
+    deleteGroup,
+    multiSelectIds,
+    copySelection,
+    pasteClipboard,
+    groups,
+    toggleGroupCollapse,
+    clearMultiSelect,
+    phases,
+    focusedPhaseId,
+    selectedPhaseId,
+    setFocusedPhaseId,
+    setSelectedPhaseId,
+    collapsedPhaseIds,
+    togglePhaseCollapse,
+    collapseAllPhases,
+    expandAllPhases,
+    focusedOwner,
+    enterOwnerFocus,
+    exitOwnerFocus,
     discoveryActive,
-    fadingOutNodeIds, fadingOutPositions, fadingInNodeIds,
+    fadingOutNodeIds,
+    fadingOutPositions,
   } = useGraphStore();
 
+  // ── Entrance animation suppression ────────────────────────────────────
+  // Direction-aware: compare previous render's values with current to decide
+  // whether the incoming graph-content mount should animate or appear instantly.
+  //
+  //  Animate    : new file load, enter node focus, enter owner focus
+  //  Suppress   : DAG↔LANE switch, exit node/owner focus, owner filter toggle
+  //
+  // Two-part design to survive multiple renders per transition:
+  //   suppressThisRender — IIFE that catches the *triggering* render
+  //   suppressActiveRef  — boolean ref that stays true for 700 ms, catching any
+  //                        secondary renders (ResizeObserver, fitToScreen timeout…)
+  const prevViewModeRef = useRef(viewMode);
+  const prevFocusModeRef = useRef(focusMode);
+  const prevFocusedOwnerRef = useRef(focusedOwner);
+  const prevAllNodesLenRef = useRef(allNodes.length);
+  const prevVisibleNodesLenRef = useRef(visibleNodes.length);
+
+  // Persistent 700 ms suppression window
+  const suppressActiveRef = useRef(false);
+  const suppressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Explicit "must animate" events — take absolute priority, can clear the window early
+  const animateThisRender = (() => {
+    if (prevAllNodesLenRef.current !== allNodes.length) return true; // file load
+    if (!prevFocusModeRef.current && focusMode) return true; // focus enter
+    if (prevFocusedOwnerRef.current === null && focusedOwner !== null)
+      return true; // owner enter
+    return false;
+  })();
+
+  // Transitions that should suppress entrance animations
+  const suppressThisRender = (() => {
+    if (animateThisRender) return false; // animate wins
+    if (prevViewModeRef.current !== viewMode) return true; // DAG↔LANE
+    if (prevFocusModeRef.current && !focusMode) return true; // focus exit
+    if (prevFocusedOwnerRef.current !== null && focusedOwner === null)
+      return true; // owner exit
+    if (prevVisibleNodesLenRef.current !== visibleNodes.length) return true; // filter toggle
+    return false;
+  })();
+
+  // Combined: suppress if triggered this render OR still inside the 700 ms window.
+  // Never suppress on explicit animate events.
+  const suppressEntrance =
+    !animateThisRender && (suppressThisRender || suppressActiveRef.current);
+
+  useLayoutEffect(() => {
+    if (animateThisRender) {
+      // Clear the window immediately so animation plays without delay
+      suppressActiveRef.current = false;
+      if (suppressTimerRef.current) {
+        clearTimeout(suppressTimerRef.current);
+        suppressTimerRef.current = null;
+      }
+    } else if (suppressThisRender) {
+      // Open / extend the 700 ms suppression window
+      suppressActiveRef.current = true;
+      if (suppressTimerRef.current) clearTimeout(suppressTimerRef.current);
+      suppressTimerRef.current = setTimeout(() => {
+        suppressActiveRef.current = false;
+      }, 700);
+    }
+    // Update prev refs — always last, after logic above has read them
+    prevViewModeRef.current = viewMode;
+    prevFocusModeRef.current = focusMode;
+    prevFocusedOwnerRef.current = focusedOwner;
+    prevAllNodesLenRef.current = allNodes.length;
+    prevVisibleNodesLenRef.current = visibleNodes.length;
+  });
 
   // ── Refs ──────────────────────────────────────────────────────────────
   const svgRef = useRef<SVGSVGElement>(null);
@@ -84,7 +203,10 @@ export function Canvas() {
     return () => obs.disconnect();
   }, []);
   // Convert pixel height to SVG-space height accounting for pan offset
-  const svgBandHeight = canvasPixelHeight / Math.max(transform.k, 0.01) + Math.abs(transform.y / Math.max(transform.k, 0.01)) + 200;
+  const svgBandHeight =
+    canvasPixelHeight / Math.max(transform.k, 0.01) +
+    Math.abs(transform.y / Math.max(transform.k, 0.01)) +
+    200;
 
   // ── Nodes hidden by collapsed phases (works in all view modes) ──────────
   // Computed separately from position adjustment so it's always reliable.
@@ -103,7 +225,9 @@ export function Canvas() {
   // (owned / upstream / downstream / partial) for opacity and badge rendering.
   const ownerFocusSets = useMemo(() => {
     if (!focusedOwner) return null;
-    const ownedIds = new Set(allNodes.filter((n) => n.owner === focusedOwner).map((n) => n.id));
+    const ownedIds = new Set(
+      allNodes.filter((n) => n.owner === focusedOwner).map((n) => n.id),
+    );
     const upstreamIds = new Set<string>();
     allNodes.forEach((n) => {
       if (n.owner === focusedOwner) {
@@ -115,7 +239,10 @@ export function Canvas() {
     });
     const downstreamIds = new Set<string>();
     allNodes.forEach((n) => {
-      if (n.owner !== focusedOwner && n.dependencies.some((dep) => ownedIds.has(dep))) {
+      if (
+        n.owner !== focusedOwner &&
+        n.dependencies.some((dep) => ownedIds.has(dep))
+      ) {
         downstreamIds.add(n.id);
       }
     });
@@ -125,17 +252,22 @@ export function Canvas() {
       const n = allNodes.find((x) => x.id === id);
       if (n) connectedOwners.add(n.owner);
     });
-    const hiddenLaneCount = [...allOwners].filter((o) => !connectedOwners.has(o)).length;
+    const hiddenLaneCount = [...allOwners].filter(
+      (o) => !connectedOwners.has(o),
+    ).length;
     return { ownedIds, upstreamIds, downstreamIds, hiddenLaneCount };
   }, [focusedOwner, allNodes]);
 
   // Helper: derive the owner focus role for a given node
-  function getOwnerFocusRole(nodeId: string, nodeOwner: string): 'owned' | 'upstream' | 'downstream' | 'partial' | null {
+  function getOwnerFocusRole(
+    nodeId: string,
+    nodeOwner: string,
+  ): "owned" | "upstream" | "downstream" | "partial" | null {
     if (!ownerFocusSets) return null;
-    if (nodeOwner === focusedOwner) return 'owned';
-    if (ownerFocusSets.upstreamIds.has(nodeId)) return 'upstream';
-    if (ownerFocusSets.downstreamIds.has(nodeId)) return 'downstream';
-    return 'partial';
+    if (nodeOwner === focusedOwner) return "owned";
+    if (ownerFocusSets.upstreamIds.has(nodeId)) return "upstream";
+    if (ownerFocusSets.downstreamIds.has(nodeId)) return "downstream";
+    return "partial";
   }
 
   // ── Phase-adjusted positions (visual x-shift for collapsed bands, dag only) ─
@@ -143,14 +275,50 @@ export function Canvas() {
   // Stored positions are never mutated.
   const adjustedPositions = useMemo(() => {
     if (collapsedPhaseIds.length === 0) return positions;
-    return computePhaseAdjustedPositions(phases, positions, collapsedPhaseIds, NODE_W, viewMode === 'lanes' ? LANE_LABEL_W : undefined).adjustedPositions;
+    return computePhaseAdjustedPositions(
+      phases,
+      positions,
+      collapsedPhaseIds,
+      NODE_W,
+      viewMode === "lanes" ? LANE_LABEL_W : undefined,
+    ).adjustedPositions;
   }, [phases, positions, collapsedPhaseIds, viewMode]);
+
+  // ── Per-node entrance delay: column stagger + y-rank within column ─────
+  // Computed here (not in NodeCard) because it needs all visible nodes and their
+  // positions to determine each node's rank within its column.
+  // Column stagger: 120ms — keep in sync with EdgeLayer's COLUMN_STAGGER constant.
+  // Y stagger: 30ms per rank so nodes in the same column ripple top-to-bottom.
+  const nodeEntranceDelay = useMemo(() => {
+    const COLUMN_STAGGER = 120;
+    const Y_STAGGER = 30;
+    const STEP = NODE_W + GAP_X;
+
+    const columnMap = new Map<number, Array<{ id: string; y: number }>>();
+    visibleNodes.forEach((node) => {
+      const pos = adjustedPositions[node.id];
+      if (!pos) return;
+      const col = Math.max(0, Math.round(pos.x / STEP));
+      if (!columnMap.has(col)) columnMap.set(col, []);
+      columnMap.get(col)!.push({ id: node.id, y: pos.y });
+    });
+
+    const delays: Record<string, number> = {};
+    columnMap.forEach((nodes, col) => {
+      const sorted = [...nodes].sort((a, b) => a.y - b.y);
+      sorted.forEach(({ id }, rank) => {
+        delays[id] = Math.min(col * COLUMN_STAGGER + rank * Y_STAGGER, 600);
+      });
+    });
+
+    return delays;
+  }, [visibleNodes, adjustedPositions]);
 
   // ── Phase crown bands + viewport-presence set ─────────────────────────
   // Derived from phases + positions + transform. No store state needed.
   const PHASE_PAD_X_C = 30; // matches PhaseLayer constant
   const PHASE_HEADER_H = 48; // matches PhaseLayer HEADER_H
-  const PHASE_PAD_Y_C  = 20; // matches PhaseLayer PHASE_PAD_Y
+  const PHASE_PAD_Y_C = 20; // matches PhaseLayer PHASE_PAD_Y
   const { crownBands, inViewportPhaseIds, globalBandTop } = useMemo(() => {
     const sorted = [...phases].sort((a, b) => a.sequence - b.sequence);
     const bands: CrownBand[] = [];
@@ -159,9 +327,9 @@ export function Canvas() {
     const allBandMinYs: number[] = [];
 
     // Viewport rectangle in SVG space
-    const vpLeft  = -tx / k;
+    const vpLeft = -tx / k;
     const vpRight = (canvasPixelWidth - tx) / k;
-    const vpTop   = -transform.y / k;
+    const vpTop = -transform.y / k;
     const vpBottom = (canvasPixelHeight - transform.y) / k;
 
     sorted.forEach((phase, idx) => {
@@ -174,8 +342,10 @@ export function Canvas() {
       const assignedPositions = [...nodePositions, ...groupPositions];
       if (assignedPositions.length === 0) return;
 
-      const minX = Math.min(...assignedPositions.map((p) => p.x)) - PHASE_PAD_X_C;
-      const maxX = Math.max(...assignedPositions.map((p) => p.x + NODE_W)) + PHASE_PAD_X_C;
+      const minX =
+        Math.min(...assignedPositions.map((p) => p.x)) - PHASE_PAD_X_C;
+      const maxX =
+        Math.max(...assignedPositions.map((p) => p.x + NODE_W)) + PHASE_PAD_X_C;
       bands.push({ phase, idx: idx + 1, minX, maxX });
 
       const minY = Math.min(...assignedPositions.map((p) => p.y));
@@ -183,22 +353,42 @@ export function Canvas() {
 
       // Check if any member of this phase is inside the viewport
       const hasNodeInView = assignedPositions.some((p) => {
-        return p.x + NODE_W > vpLeft && p.x < vpRight &&
-               p.y > vpTop - 200 && p.y < vpBottom + 200;
+        return (
+          p.x + NODE_W > vpLeft &&
+          p.x < vpRight &&
+          p.y > vpTop - 200 &&
+          p.y < vpBottom + 200
+        );
       });
       if (hasNodeInView) inViewport.add(phase.id);
     });
 
     // globalBandTop mirrors PhaseLayer's calculation: the shared header top for all bands.
-    const gbt = allBandMinYs.length > 0
-      ? Math.min(...allBandMinYs) - PHASE_HEADER_H - PHASE_PAD_Y_C
-      : 0;
+    const gbt =
+      allBandMinYs.length > 0
+        ? Math.min(...allBandMinYs) - PHASE_HEADER_H - PHASE_PAD_Y_C
+        : 0;
 
-    return { crownBands: bands, inViewportPhaseIds: inViewport, globalBandTop: gbt };
-  }, [phases, adjustedPositions, transform, canvasPixelWidth, canvasPixelHeight]);
+    return {
+      crownBands: bands,
+      inViewportPhaseIds: inViewport,
+      globalBandTop: gbt,
+    };
+  }, [
+    phases,
+    adjustedPositions,
+    transform,
+    canvasPixelWidth,
+    canvasPixelHeight,
+  ]);
 
   // ── Pan state (local — doesn't need to be in global store) ────────────
-  const panState = useRef<{ startX: number; startY: number; startTX: number; startTY: number } | null>(null);
+  const panState = useRef<{
+    startX: number;
+    startY: number;
+    startTX: number;
+    startTY: number;
+  } | null>(null);
 
   // ── Mouse-button state — suppresses node/group tooltip while dragging ──
   const [isMouseDown, setIsMouseDown] = useState(false);
@@ -209,35 +399,56 @@ export function Canvas() {
   const [spaceHeld, setSpaceHeld] = useState(false);
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.code !== 'Space') return;
+      if (e.code !== "Space") return;
       const tag = (e.target as HTMLElement).tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
       e.preventDefault(); // prevent page scroll
       setSpaceHeld(true);
     }
     function onKeyUp(e: KeyboardEvent) {
-      if (e.code !== 'Space') return;
+      if (e.code !== "Space") return;
       setSpaceHeld(false);
     }
-    function onMouseDown() { setIsMouseDown(true); }
-    function onMouseUp()   { setIsMouseDown(false); }
-    document.addEventListener('keydown', onKeyDown);
-    document.addEventListener('keyup', onKeyUp);
-    document.addEventListener('mousedown', onMouseDown, true); // capture: fires before stopPropagation
-    document.addEventListener('mouseup', onMouseUp, true);
+    function onMouseDown() {
+      setIsMouseDown(true);
+    }
+    function onMouseUp() {
+      setIsMouseDown(false);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keyup", onKeyUp);
+    document.addEventListener("mousedown", onMouseDown, true); // capture: fires before stopPropagation
+    document.addEventListener("mouseup", onMouseUp, true);
     return () => {
-      document.removeEventListener('keydown', onKeyDown);
-      document.removeEventListener('keyup', onKeyUp);
-      document.removeEventListener('mousedown', onMouseDown, true);
-      document.removeEventListener('mouseup', onMouseUp, true);
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keyup", onKeyUp);
+      document.removeEventListener("mousedown", onMouseDown, true);
+      document.removeEventListener("mouseup", onMouseUp, true);
     };
   }, []);
 
   // ── Ghost edge mouse position (for drawing connections) ───────────────
-  const [ghostTarget, setGhostTarget] = useState<{ x: number; y: number } | null>(null);
+  const [ghostTarget, setGhostTarget] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
 
   // ── Node hover tooltip position (screen coords) ───────────────────────
-  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  const [tooltipHidden, setTooltipHidden] = useState(false);
+  const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (tooltipTimerRef.current) clearTimeout(tooltipTimerRef.current);
+    setTooltipHidden(false);
+    if (hoveredNodeId) {
+      tooltipTimerRef.current = setTimeout(() => setTooltipHidden(true), 1500);
+    }
+    return () => {
+      if (tooltipTimerRef.current) clearTimeout(tooltipTimerRef.current);
+    };
+  }, [hoveredNodeId]);
 
   // ── Collapsed phase hover card ─────────────────────────────────────────
   const [collapsedPhaseHover, setCollapsedPhaseHover] = useState<{
@@ -275,16 +486,16 @@ export function Canvas() {
     for (const edge of allEdges) {
       if (included.has(`${edge.from}|${edge.to}`)) continue;
       const fromGroup = nodeToGroup.get(edge.from);
-      const toGroup   = nodeToGroup.get(edge.to);
-      const fromVis   = visibleNodeIds.has(edge.from);
-      const toVis     = visibleNodeIds.has(edge.to);
+      const toGroup = nodeToGroup.get(edge.to);
+      const fromVis = visibleNodeIds.has(edge.from);
+      const toVis = visibleNodeIds.has(edge.to);
       const key = `${edge.from}|${edge.to}`;
       if (extraKeys.has(key)) continue;
       // Cross-boundary: one side visible node, other inside a collapsed group
       if ((fromVis && toGroup) || (toVis && fromGroup)) {
         extra.push(edge);
         extraKeys.add(key);
-      // Both endpoints inside DIFFERENT collapsed groups
+        // Both endpoints inside DIFFERENT collapsed groups
       } else if (fromGroup && toGroup && fromGroup !== toGroup) {
         extra.push(edge);
         extraKeys.add(key);
@@ -300,7 +511,9 @@ export function Canvas() {
   // Groups whose every descendant node is phase-hidden are suppressed entirely.
   const phaseFilteredEdges = useMemo(() => {
     if (hiddenNodeIds.size === 0) return displayEdges;
-    return displayEdges.filter((e) => !hiddenNodeIds.has(e.from) && !hiddenNodeIds.has(e.to));
+    return displayEdges.filter(
+      (e) => !hiddenNodeIds.has(e.from) && !hiddenNodeIds.has(e.to),
+    );
   }, [displayEdges, hiddenNodeIds]);
 
   const phaseHiddenGroupIds = useMemo(() => {
@@ -308,14 +521,19 @@ export function Canvas() {
     const hidden = new Set<string>();
     for (const group of groups) {
       const descendants = getAllDescendantNodeIds(group.id, groups);
-      if (descendants.length > 0 && descendants.every((id) => hiddenNodeIds.has(id))) {
+      if (
+        descendants.length > 0 &&
+        descendants.every((id) => hiddenNodeIds.has(id))
+      ) {
         hidden.add(group.id);
       }
     }
     return hidden;
   }, [groups, hiddenNodeIds]);
 
-  const focusedNode = focusNodeId ? allNodes.find((n) => n.id === focusNodeId) : null;
+  const focusedNode = focusNodeId
+    ? allNodes.find((n) => n.id === focusNodeId)
+    : null;
 
   // ── Convert screen coordinates to SVG canvas coordinates ─────────────
   // Reads transformRef (not transform state) so this callback is stable and
@@ -347,8 +565,13 @@ export function Canvas() {
     }
     // Only start panning if clicking directly on the SVG or graph root (not a node)
     const target = e.target as Element;
-    if (target.closest('.node-group') || target.closest('.edge-hit') || target.closest('.group-overlay')) return;
-    if (designMode && designTool === 'add') return; // Add tool uses click, not drag
+    if (
+      target.closest(".node-group") ||
+      target.closest(".edge-hit") ||
+      target.closest(".group-overlay")
+    )
+      return;
+    if (designMode && designTool === "add") return; // Add tool uses click, not drag
 
     cancelFlyAnimation(); // Cancel any in-progress fly animation so the user takes over immediately
     panState.current = {
@@ -364,7 +587,7 @@ export function Canvas() {
     // Space pan mode: only run pan logic, skip all other pointer actions
     if (!spaceHeld) {
       // Update ghost edge target if connecting
-      if (designMode && designTool === 'connect' && connectSourceId) {
+      if (designMode && designTool === "connect" && connectSourceId) {
         const pt = screenToSvg(e.clientX, e.clientY);
         setGhostTarget(pt);
       }
@@ -395,9 +618,12 @@ export function Canvas() {
     }
   }
 
-  const handleGroupToggle = useCallback((groupId: string) => {
-    toggleGroupCollapse(groupId);
-  }, [toggleGroupCollapse]);
+  const handleGroupToggle = useCallback(
+    (groupId: string) => {
+      toggleGroupCollapse(groupId);
+    },
+    [toggleGroupCollapse],
+  );
 
   // ── Scroll to zoom (centered on cursor position) ──────────────────────
   // React 18 attaches onWheel as a PASSIVE listener, which means
@@ -409,7 +635,9 @@ export function Canvas() {
   // reads the latest value without needing to re-register itself on every
   // zoom step (which would cause jank from rapid add/remove cycles).
   const transformRef = useRef<Transform>(transform);
-  useEffect(() => { transformRef.current = transform; }, [transform]);
+  useEffect(() => {
+    transformRef.current = transform;
+  }, [transform]);
 
   // ── Fly-to animation ──────────────────────────────────────────────────────
   // When flyTarget is set (by search, view-switch, fit-to-screen, etc.), smoothly
@@ -466,7 +694,7 @@ export function Canvas() {
         flyAnimRef.current = null;
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flyTarget]); // flyTarget identity change is the only trigger; setTransform/clearFlyTarget are stable
 
   useEffect(() => {
@@ -487,27 +715,29 @@ export function Canvas() {
       setTransform({ x: newX, y: newY, k: newScale });
     }
 
-    svgEl.addEventListener('wheel', onWheel, { passive: false });
-    return () => svgEl.removeEventListener('wheel', onWheel);
-  // setTransform is stable (Zustand action), so this effect runs once only.
+    svgEl.addEventListener("wheel", onWheel, { passive: false });
+    return () => svgEl.removeEventListener("wheel", onWheel);
+    // setTransform is stable (Zustand action), so this effect runs once only.
   }, [setTransform]);
 
   // ── Click on SVG background ───────────────────────────────────────────
   function handleSvgClick(e: React.MouseEvent<SVGSVGElement>) {
     if (spaceHeld) return; // space pan mode — no selections or tool actions
     const target = e.target as Element;
-    const clickedNode = target.closest('.node-group');
-    const clickedEdge = target.closest('.edge-hit');
-    const clickedGroup = target.closest('.group-overlay');
+    const clickedNode = target.closest(".node-group");
+    const clickedEdge = target.closest(".edge-hit");
+    const clickedGroup = target.closest(".group-overlay");
 
-    if (designMode && designTool === 'add' && !clickedNode && !clickedGroup) {
+    if (designMode && designTool === "add" && !clickedNode && !clickedGroup) {
       // Add mode: open the add-node modal at the click position
       const pt = screenToSvg(e.clientX, e.clientY);
-      document.dispatchEvent(new CustomEvent('flowgraph:add-node', { detail: pt }));
+      document.dispatchEvent(
+        new CustomEvent("flowgraph:add-node", { detail: pt }),
+      );
       return;
     }
 
-    if (designMode && designTool === 'connect') {
+    if (designMode && designTool === "connect") {
       if (!clickedNode && !clickedEdge && !clickedGroup) {
         // Clicked empty space in connect mode — cancel the connection
         setConnectSource(null);
@@ -519,7 +749,7 @@ export function Canvas() {
     // Click on background or phase — deselect nodes/groups and clear multi-select.
     // Clicking a phase should still deselect nodes/groups; the phase click handler
     // selects the phase separately via onPhaseClick.
-    const clickedPhase = target.closest('[data-phase-id]');
+    const clickedPhase = target.closest("[data-phase-id]");
     if (!clickedNode && !clickedGroup) {
       setSelectedNode(null);
       clearMultiSelect();
@@ -533,15 +763,15 @@ export function Canvas() {
   function handleSvgDblClick(e: React.MouseEvent<SVGSVGElement>) {
     if (spaceHeld) return; // space pan mode — no actions
     const target = e.target as Element;
-    if (target.closest('.node-group')) return; // Node dblclick handled in NodeCard
-    if (target.closest('.group-overlay')) return; // Group dblclick handled in GroupCard
+    if (target.closest(".node-group")) return; // Node dblclick handled in NodeCard
+    if (target.closest(".group-overlay")) return; // Group dblclick handled in GroupCard
     if (focusMode) exitFocusMode();
   }
 
   // ── Keyboard: Escape cancels connect mode or exits focus; Delete removes selection ──
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
+      if (e.key === "Escape") {
         if (connectSourceId) {
           setConnectSource(null);
           setGhostTarget(null);
@@ -553,54 +783,83 @@ export function Canvas() {
         return;
       }
 
-      if ((e.ctrlKey || e.metaKey) && e.key === 'c' && designMode) {
+      if ((e.ctrlKey || e.metaKey) && e.key === "c" && designMode) {
         const tag = (e.target as HTMLElement).tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+        if (tag === "INPUT" || tag === "TEXTAREA") return;
         e.preventDefault();
         copySelection();
         return;
       }
 
-      if ((e.ctrlKey || e.metaKey) && e.key === 'v' && designMode) {
+      if ((e.ctrlKey || e.metaKey) && e.key === "v" && designMode) {
         const tag = (e.target as HTMLElement).tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+        if (tag === "INPUT" || tag === "TEXTAREA") return;
         e.preventDefault();
         pasteClipboard();
         return;
       }
 
-      if (e.key === 'Delete' && designMode) {
+      if (e.key === "Delete" && designMode) {
         // Don't fire when the user is typing in an input/textarea
         const tag = (e.target as HTMLElement).tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+        if (tag === "INPUT" || tag === "TEXTAREA") return;
 
         if (multiSelectIds.length > 0) {
           // Multi-select: each id may be a node or a group
-          const nodeIds = multiSelectIds.filter((id) => allNodes.some((n) => n.id === id));
-          const groupIds = multiSelectIds.filter((id) => groups.some((g) => g.id === id));
+          const nodeIds = multiSelectIds.filter((id) =>
+            allNodes.some((n) => n.id === id),
+          );
+          const groupIds = multiSelectIds.filter((id) =>
+            groups.some((g) => g.id === id),
+          );
           const total = multiSelectIds.length;
-          if (!confirm(`Delete ${total} selected item${total > 1 ? 's' : ''}? This cannot be undone.`)) return;
+          if (
+            !confirm(
+              `Delete ${total} selected item${total > 1 ? "s" : ""}? This cannot be undone.`,
+            )
+          )
+            return;
           groupIds.forEach((id) => deleteGroup(id, false));
           nodeIds.forEach((id) => deleteNode(id));
         } else if (selectedNodeId) {
           const node = allNodes.find((n) => n.id === selectedNodeId);
           if (!node) return;
-          if (!confirm(`Delete "${node.name}"? All connections to/from this node will also be removed.`)) return;
+          if (
+            !confirm(
+              `Delete "${node.name}"? All connections to/from this node will also be removed.`,
+            )
+          )
+            return;
           deleteNode(selectedNodeId);
         } else if (selectedGroupId) {
           const group = groups.find((g) => g.id === selectedGroupId);
           if (!group) return;
-          if (!confirm(`Delete group "${group.name}" and all its contents?`)) return;
+          if (!confirm(`Delete group "${group.name}" and all its contents?`))
+            return;
           deleteGroup(selectedGroupId, false);
         }
       }
     }
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-  }, [connectSourceId, focusMode, exitFocusMode, focusedOwner, exitOwnerFocus, setConnectSource,
-      designMode, selectedNodeId, selectedGroupId, multiSelectIds,
-      deleteNode, deleteGroup, allNodes, groups,
-      copySelection, pasteClipboard]);
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [
+    connectSourceId,
+    focusMode,
+    exitFocusMode,
+    focusedOwner,
+    exitOwnerFocus,
+    setConnectSource,
+    designMode,
+    selectedNodeId,
+    selectedGroupId,
+    multiSelectIds,
+    deleteNode,
+    deleteGroup,
+    allNodes,
+    groups,
+    copySelection,
+    pasteClipboard,
+  ]);
 
   // ── Hover highlight via direct DOM class manipulation ────────────────
   // Positive-only: only the hovered node and its direct neighbors get visual
@@ -611,12 +870,12 @@ export function Canvas() {
   // across the whole canvas. At high zoom those tiles are large and Chrome can't
   // repaint them all in one frame — visible as grey/white box flicker everywhere.
   useEffect(() => {
-    const graphRoot = document.getElementById('graph-root');
+    const graphRoot = document.getElementById("graph-root");
     if (!graphRoot) return;
 
     // Clear all highlight classes whenever hovered target changes
-    graphRoot.querySelectorAll('.hovered, .neighbor').forEach((el) => {
-      el.classList.remove('hovered', 'neighbor');
+    graphRoot.querySelectorAll(".hovered, .neighbor").forEach((el) => {
+      el.classList.remove("hovered", "neighbor");
     });
 
     if (!hoveredNodeId) return;
@@ -634,28 +893,32 @@ export function Canvas() {
     }
 
     if (hovGroup) {
-      const descendantIds = new Set(getAllDescendantNodeIds(hovGroup.id, groups));
+      const descendantIds = new Set(
+        getAllDescendantNodeIds(hovGroup.id, groups),
+      );
       for (const edge of allEdges) {
         const fromIn = descendantIds.has(edge.from);
-        const toIn   = descendantIds.has(edge.to);
-        if (fromIn && !toIn)  directChildren.add(resolveToVisible(edge.to));
-        if (toIn   && !fromIn) directParents.add(resolveToVisible(edge.from));
+        const toIn = descendantIds.has(edge.to);
+        if (fromIn && !toIn) directChildren.add(resolveToVisible(edge.to));
+        if (toIn && !fromIn) directParents.add(resolveToVisible(edge.from));
       }
     } else {
       const hovNode = allNodes.find((n) => n.id === hoveredNodeId);
-      (hovNode?.dependencies ?? []).forEach((id) => directParents.add(resolveToVisible(id)));
+      (hovNode?.dependencies ?? []).forEach((id) =>
+        directParents.add(resolveToVisible(id)),
+      );
       allEdges
         .filter((e) => e.from === hoveredNodeId)
         .forEach((e) => directChildren.add(resolveToVisible(e.to)));
     }
 
     // Apply .hovered / .neighbor — only to the handful of relevant elements
-    graphRoot.querySelectorAll('.node-group, .group-overlay').forEach((el) => {
-      const id = el.getAttribute('data-id') ?? el.getAttribute('data-group-id');
+    graphRoot.querySelectorAll(".node-group, .group-overlay").forEach((el) => {
+      const id = el.getAttribute("data-id") ?? el.getAttribute("data-group-id");
       if (id === hoveredNodeId) {
-        el.classList.add('hovered');
+        el.classList.add("hovered");
       } else if (id && (directParents.has(id) || directChildren.has(id))) {
-        el.classList.add('neighbor');
+        el.classList.add("neighbor");
       }
     });
   }, [hoveredNodeId, allNodes, visibleEdges, groups]);
@@ -665,18 +928,20 @@ export function Canvas() {
   // ancestor set. Nodes in that set (+ the target) get path classes; everything
   // else is ghosted. Edges on the path are brightened via inline style.
   useEffect(() => {
-    const graphRoot = document.getElementById('graph-root');
+    const graphRoot = document.getElementById("graph-root");
     if (!graphRoot) return;
 
     // Clear all path classes and edge overrides
-    graphRoot.querySelectorAll('.path-focus, .path-ancestor, .path-ghost').forEach((el) => {
-      el.classList.remove('path-focus', 'path-ancestor', 'path-ghost');
-    });
-    graphRoot.querySelectorAll('g[data-edge-from] .edge-vis').forEach((el) => {
+    graphRoot
+      .querySelectorAll(".path-focus, .path-ancestor, .path-ghost")
+      .forEach((el) => {
+        el.classList.remove("path-focus", "path-ancestor", "path-ghost");
+      });
+    graphRoot.querySelectorAll("g[data-edge-from] .edge-vis").forEach((el) => {
       const e = el as SVGPathElement;
-      e.style.opacity = '';
-      e.style.strokeWidth = '';
-      e.style.stroke = '';
+      e.style.opacity = "";
+      e.style.strokeWidth = "";
+      e.style.stroke = "";
     });
 
     if (!pathHighlightNodeId) return;
@@ -695,50 +960,61 @@ export function Canvas() {
     }
 
     // Apply node classes
-    graphRoot.querySelectorAll('.node-group, .group-overlay').forEach((el) => {
-      const id = el.getAttribute('data-id') ?? el.getAttribute('data-group-id');
+    graphRoot.querySelectorAll(".node-group, .group-overlay").forEach((el) => {
+      const id = el.getAttribute("data-id") ?? el.getAttribute("data-group-id");
       if (!id) return;
       if (id === pathHighlightNodeId) {
-        el.classList.add('path-focus');
+        el.classList.add("path-focus");
       } else if (ancestors.has(id)) {
-        el.classList.add('path-ancestor');
+        el.classList.add("path-ancestor");
       } else {
-        el.classList.add('path-ghost');
+        el.classList.add("path-ghost");
       }
     });
 
     // Apply edge styles — on-path edges are cyan + bright; off-path are dimmed
-    graphRoot.querySelectorAll('g[data-edge-from]').forEach((el) => {
-      const from = el.getAttribute('data-edge-from');
-      const to = el.getAttribute('data-edge-to');
+    graphRoot.querySelectorAll("g[data-edge-from]").forEach((el) => {
+      const from = el.getAttribute("data-edge-from");
+      const to = el.getAttribute("data-edge-to");
       if (!from || !to) return;
-      const onPath = ancestors.has(from) && (to === pathHighlightNodeId || ancestors.has(to));
-      const visEl = el.querySelector('.edge-vis') as SVGPathElement | null;
+      const onPath =
+        ancestors.has(from) &&
+        (to === pathHighlightNodeId || ancestors.has(to));
+      const visEl = el.querySelector(".edge-vis") as SVGPathElement | null;
       if (!visEl) return;
       if (onPath) {
-        visEl.style.stroke = '#22d3ee';
-        visEl.style.strokeWidth = '2.5';
-        visEl.style.opacity = '1';
+        visEl.style.stroke = "#22d3ee";
+        visEl.style.strokeWidth = "2.5";
+        visEl.style.opacity = "1";
       } else {
-        visEl.style.opacity = '0.06';
+        visEl.style.opacity = "0.06";
       }
     });
   }, [pathHighlightNodeId, allEdges]);
 
   // ── Stable focus-request handler (prevents NodeCard memo invalidation) ─
-  const handleFocusRequest = useCallback((id: string) => {
-    if (!designMode) {
-      enterFocusMode(id);
-      setTimeout(() => fitToScreen(), 50);
-    }
-  }, [designMode, enterFocusMode, fitToScreen]);
+  const handleFocusRequest = useCallback(
+    (id: string) => {
+      if (!designMode) {
+        enterFocusMode(id);
+        setTimeout(() => fitToScreen(), 50);
+      }
+    },
+    [designMode, enterFocusMode, fitToScreen],
+  );
 
   // ── Collapsed phase hover card handlers ───────────────────────────────
-  const handleCollapsedHover = useCallback((phaseId: string, cx: number, cy: number) => {
-    if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null; }
-    setCollapsedPhaseHiding(false);
-    setCollapsedPhaseHover({ phaseId, clientX: cx, clientY: cy });
-  }, []);
+  const handleCollapsedHover = useCallback(
+    (phaseId: string, cx: number, cy: number) => {
+      if (hideTimerRef.current) {
+        clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = null;
+      }
+      setCollapsedPhaseHiding(false);
+      setCollapsedPhaseHover({ phaseId, clientX: cx, clientY: cy });
+    },
+    [],
+  );
 
   const handleCollapsedHoverEnd = useCallback(() => {
     setCollapsedPhaseHiding(true);
@@ -750,24 +1026,32 @@ export function Canvas() {
 
   // ── Cursor style based on active tool ─────────────────────────────────
   const canvasCursor = spaceHeld
-    ? (panState.current ? 'grabbing' : 'grab')
-    : designMode && designTool === 'add'
-      ? 'cell'
-      : designMode && designTool === 'connect'
-        ? 'crosshair'
-        : panState.current ? 'grabbing' : 'grab';
+    ? panState.current
+      ? "grabbing"
+      : "grab"
+    : designMode && designTool === "add"
+      ? "cell"
+      : designMode && designTool === "connect"
+        ? "crosshair"
+        : panState.current
+          ? "grabbing"
+          : "grab";
 
   return (
     <div
       id="canvas-wrap"
       ref={canvasWrapRef}
-      className={`${styles.canvasWrap} ${designMode ? styles.designModeActive : ''} ${discoveryActive ? styles.cinemaModeActive : ''} ${focusedOwner ? styles.ownerFocusModeActive : ''}`}
-      style={focusedOwner ? { '--owner-focus-color': ownerColors[focusedOwner] ?? '#4f9eff' } as React.CSSProperties : undefined}
+      className={`${styles.canvasWrap} ${designMode ? styles.designModeActive : ""} ${discoveryActive ? styles.cinemaModeActive : ""} ${focusedOwner ? styles.ownerFocusModeActive : ""}`}
+      style={
+        focusedOwner
+          ? ({
+              "--owner-focus-color": ownerColors[focusedOwner] ?? "#4f9eff",
+            } as React.CSSProperties)
+          : undefined
+      }
     >
       {/* Cinema mode badge */}
-      {discoveryActive && (
-        <div className={styles.cinemaBadge}>🎬 Cinema</div>
-      )}
+      {discoveryActive && <div className={styles.cinemaBadge}>🎬 Cinema</div>}
 
       {/* Owner Focus badge — top-left, visible in all modes including cinema */}
       {focusedOwner && (
@@ -779,49 +1063,98 @@ export function Canvas() {
         <div className={styles.emptyState}>
           <div className={styles.emptyIcon}>⬡</div>
           <div className={styles.emptyTitle}>FlowGraph</div>
-          <div className={styles.emptySub}>Visualize and edit dependency graphs</div>
+          <div className={styles.emptySub}>
+            Visualize and edit dependency graphs
+          </div>
           <div className={styles.emptyActions}>
             <button
               className={styles.emptyActionBtn}
-              onClick={() => document.dispatchEvent(new CustomEvent('flowgraph:open-file-picker'))}
+              onClick={() =>
+                document.dispatchEvent(
+                  new CustomEvent("flowgraph:open-file-picker"),
+                )
+              }
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
               </svg>
               <span className={styles.emptyActionLabel}>Open JSON File</span>
-              <span className={styles.emptyActionHint}>Open an existing flowchart</span>
+              <span className={styles.emptyActionHint}>
+                Open an existing flowchart
+              </span>
             </button>
             <div className={styles.emptyOr}>or</div>
             <button
               className={`${styles.emptyActionBtn} ${styles.emptyActionBtnSample}`}
-              onClick={() => document.dispatchEvent(new CustomEvent('flowgraph:pick-sample'))}
+              onClick={() =>
+                document.dispatchEvent(new CustomEvent("flowgraph:pick-sample"))
+              }
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-                <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <rect x="3" y="3" width="7" height="7" />
+                <rect x="14" y="3" width="7" height="7" />
+                <rect x="14" y="14" width="7" height="7" />
+                <rect x="3" y="14" width="7" height="7" />
               </svg>
               <span className={styles.emptyActionLabel}>Try Sample</span>
-              <span className={styles.emptyActionHint}>Choose a demo flowchart</span>
+              <span className={styles.emptyActionHint}>
+                Choose a demo flowchart
+              </span>
             </button>
             <div className={styles.emptyOr}>or</div>
             <button
               className={`${styles.emptyActionBtn} ${styles.emptyActionBtnDesign}`}
               onClick={() => clearGraph()}
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
               </svg>
               <span className={styles.emptyActionLabel}>New Flowchart</span>
-              <span className={styles.emptyActionHint}>Start from scratch in design mode</span>
+              <span className={styles.emptyActionHint}>
+                Start from scratch in design mode
+              </span>
             </button>
           </div>
           <div className={styles.emptyFootnote}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
-            Chrome / Edge: opening a file links it — Save writes back to your file directly, no download needed.
-            Other browsers: Save downloads a copy.
+            Chrome / Edge: opening a file links it — Save writes back to your
+            file directly, no download needed. Other browsers: Save downloads a
+            copy.
           </div>
           <div className={styles.emptyCredit}>
             Built with Claude Code · Authored by Giang Tran
@@ -843,180 +1176,255 @@ export function Canvas() {
       >
         <defs>
           {/* Default arrowhead marker for edges */}
-          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <marker
+            id="arrow"
+            markerWidth="8"
+            markerHeight="6"
+            refX="7"
+            refY="3"
+            orient="auto"
+          >
             <polygon points="0 0, 8 3, 0 6" fill="#2e3850" />
           </marker>
           {/* Highlighted arrowhead — blue, for hovered connected edges */}
-          <marker id="arrow-highlight" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <marker
+            id="arrow-highlight"
+            markerWidth="8"
+            markerHeight="6"
+            refX="7"
+            refY="3"
+            orient="auto"
+          >
             <polygon points="0 0, 8 3, 0 6" fill="#4f9eff" />
           </marker>
           {/*
             Dynamic color arrowhead — inherits currentColor from the edge stroke.
             Used when hovering so the arrowhead matches the owner color of the source node.
           */}
-          <marker id="arrow-dyn" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <marker
+            id="arrow-dyn"
+            markerWidth="8"
+            markerHeight="6"
+            refX="7"
+            refY="3"
+            orient="auto"
+          >
             <polygon points="0 0, 8 3, 0 6" fill="currentColor" />
           </marker>
           {/* Design mode ghost edge arrowhead — purple dashed */}
-          <marker id="arrow-ghost" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <marker
+            id="arrow-ghost"
+            markerWidth="8"
+            markerHeight="6"
+            refX="7"
+            refY="3"
+            orient="auto"
+          >
             <polygon points="0 0, 8 3, 0 6" fill="#a78bfa" />
           </marker>
         </defs>
 
         {/* Graph root — all pan/zoom transform is applied here */}
-        <g id="graph-root" transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}>
+        <g
+          id="graph-root"
+          transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}
+        >
           {/* Layer order: lanes background → edges → nodes (nodes always on top) */}
           {/* key causes React to remount when view/focus changes, replaying the CSS fade-in */}
-          <g key={`${viewMode}-${focusMode ? focusNodeId : 'normal'}`} id="graph-content" style={spaceHeld ? { pointerEvents: 'none' } : undefined}>
-          {/* Phase bands — fills + borders only, rendered first behind everything */}
-          <g id="phase-layer">
-            <PhaseLayer
-              phases={phases}
-              nodes={visibleNodes}
-              groups={groups}
-              positions={adjustedPositions}
-              focusedPhaseId={focusedPhaseId}
-              selectedPhaseId={selectedPhaseId}
-              canvasHeight={svgBandHeight}
-              collapsedPhaseIds={collapsedPhaseIds}
-              viewMode={viewMode}
-              designMode={designMode}
-              screenToSvg={screenToSvg}
-              onPhaseClick={(id) => setSelectedPhaseId(id)}
-              onPhaseDoubleClick={(id) => togglePhaseCollapse(id)}
-              onToggleCollapse={togglePhaseCollapse}
-              onCollapsedHover={handleCollapsedHover}
-              onCollapsedHoverEnd={handleCollapsedHoverEnd}
-              renderPart="background"
-              transform={transform}
-              canvasPixelHeight={canvasPixelHeight}
-              spaceHeld={spaceHeld}
-            />
-          </g>
-          <g id="lanes-layer">
-            <LaneLayer
-              nodes={visibleNodes}
-              positions={adjustedPositions}
-              laneMetrics={laneMetrics}
-              ownerColors={ownerColors}
-              viewMode={viewMode}
-              onFocusOwner={enterOwnerFocus}
-              focusedOwner={focusedOwner}
-            />
-          </g>
+          <g
+            key={`${viewMode}-${focusMode ? focusNodeId : "normal"}-${visibleNodes.length}-${visibleEdges[0]?.from ?? "x"}`}
+            id="graph-content"
+            className={suppressEntrance ? "suppress-entrance" : undefined}
+            style={spaceHeld ? { pointerEvents: "none" } : undefined}
+          >
+            {/* Phase bands — fills + borders only, rendered first behind everything */}
+            <g id="phase-layer">
+              <PhaseLayer
+                phases={phases}
+                nodes={visibleNodes}
+                groups={groups}
+                positions={adjustedPositions}
+                focusedPhaseId={focusedPhaseId}
+                selectedPhaseId={selectedPhaseId}
+                canvasHeight={svgBandHeight}
+                collapsedPhaseIds={collapsedPhaseIds}
+                viewMode={viewMode}
+                designMode={designMode}
+                screenToSvg={screenToSvg}
+                onPhaseClick={(id) => setSelectedPhaseId(id)}
+                onPhaseDoubleClick={(id) => togglePhaseCollapse(id)}
+                onToggleCollapse={togglePhaseCollapse}
+                onCollapsedHover={handleCollapsedHover}
+                onCollapsedHoverEnd={handleCollapsedHoverEnd}
+                renderPart="background"
+                transform={transform}
+                canvasPixelHeight={canvasPixelHeight}
+                spaceHeld={spaceHeld}
+              />
+            </g>
+            <g id="lanes-layer">
+              <LaneLayer
+                nodes={visibleNodes}
+                positions={adjustedPositions}
+                laneMetrics={laneMetrics}
+                ownerColors={ownerColors}
+                viewMode={viewMode}
+                onFocusOwner={enterOwnerFocus}
+                focusedOwner={focusedOwner}
+              />
+            </g>
 
-          {/* Expanded group overlays — drawn below edges so they appear as background.
+            {/* Expanded group overlays — drawn below edges so they appear as background.
               Sorted outer-first (highest nestLevel) so inner groups render last = on top,
               ensuring inner groups capture clicks before outer group overlays do. */}
-          <g id="groups-expanded-layer">
-            {(() => {
-              const hiddenGroupIds = getHiddenGroupIds(groups);
-              return groups
-                .filter((g) => !g.collapsed && !hiddenGroupIds.has(g.id) && !phaseHiddenGroupIds.has(g.id))
-                .sort((a, b) => computeGroupNestLevel(b.id, groups) - computeGroupNestLevel(a.id, groups));
-            })().map((group) => {
-              const childNodePositions = getAllDescendantNodeIds(group.id, groups)
-                .map((nid) => adjustedPositions[nid])
-                .filter(Boolean) as { x: number; y: number }[];
-              const groupColor = ownerColors[group.owners[0]] ?? '#4f9eff';
-              const nestLevel = computeGroupNestLevel(group.id, groups);
-              const pos = adjustedPositions[group.id] ?? { x: 0, y: 0 };
-              return (
-                <GroupCard
-                  key={group.id}
-                  group={group}
-                  position={pos}
-                  color={groupColor}
-                  childPositions={childNodePositions}
-                  screenToSvg={screenToSvg}
-                  nestLevel={nestLevel}
-                  onToggleCollapse={handleGroupToggle}
-                  laneMetrics={laneMetrics}
-                  viewMode={viewMode}
-                  laneFocusRole={getOwnerFocusRole(group.id, group.owners[0] ?? '')}
-                />
-              );
-            })}
-          </g>
+            <g id="groups-expanded-layer">
+              {(() => {
+                const hiddenGroupIds = getHiddenGroupIds(groups);
+                return groups
+                  .filter(
+                    (g) =>
+                      !g.collapsed &&
+                      !hiddenGroupIds.has(g.id) &&
+                      !phaseHiddenGroupIds.has(g.id),
+                  )
+                  .sort(
+                    (a, b) =>
+                      computeGroupNestLevel(b.id, groups) -
+                      computeGroupNestLevel(a.id, groups),
+                  );
+              })().map((group) => {
+                const childNodePositions = getAllDescendantNodeIds(
+                  group.id,
+                  groups,
+                )
+                  .map((nid) => adjustedPositions[nid])
+                  .filter(Boolean) as { x: number; y: number }[];
+                const groupColor = ownerColors[group.owners[0]] ?? "#4f9eff";
+                const nestLevel = computeGroupNestLevel(group.id, groups);
+                const pos = adjustedPositions[group.id] ?? { x: 0, y: 0 };
+                return (
+                  <GroupCard
+                    key={group.id}
+                    group={group}
+                    position={pos}
+                    color={groupColor}
+                    childPositions={childNodePositions}
+                    screenToSvg={screenToSvg}
+                    nestLevel={nestLevel}
+                    onToggleCollapse={handleGroupToggle}
+                    laneMetrics={laneMetrics}
+                    viewMode={viewMode}
+                    laneFocusRole={getOwnerFocusRole(
+                      group.id,
+                      group.owners[0] ?? "",
+                    )}
+                    entranceDelay={
+                      Math.max(0, Math.round(pos.x / (NODE_W + GAP_X))) * 120
+                    }
+                    animate={!suppressEntrance}
+                  />
+                );
+              })}
+            </g>
 
-          <g id="edges-layer">
-            <EdgeLayer
-              edges={phaseFilteredEdges}
-              positions={adjustedPositions}
-              designMode={designMode}
-              ownerColors={ownerColors}
-              nodes={visibleNodes}
-              groups={groups}
-              ownerFocusSets={ownerFocusSets}
-              focusedOwner={focusedOwner}
-            />
-            {/* Ghost edge shown while drawing a connection in design mode */}
-            {designMode && connectSourceId && ghostTarget && (
-              <GhostEdge
-                sourcePosition={adjustedPositions[connectSourceId]}
-                targetPoint={ghostTarget}
+            <g id="edges-layer">
+              <EdgeLayer
+                edges={phaseFilteredEdges}
+                positions={adjustedPositions}
+                designMode={designMode}
+                ownerColors={ownerColors}
+                nodes={visibleNodes}
+                groups={groups}
+                ownerFocusSets={ownerFocusSets}
+                focusedOwner={focusedOwner}
+                suppressEntranceAnimation={suppressEntrance}
               />
-            )}
-          </g>
-          <g id="nodes-layer">
-            {visibleNodes.filter((node) => !hiddenNodeIds.has(node.id)).map((node) => (
-              <NodeCard
-                key={node.id}
-                node={node}
-                position={adjustedPositions[node.id] ?? { x: 0, y: 0 }}
-                color={ownerColors[node.owner] ?? '#4f9eff'}
-                screenToSvg={screenToSvg}
-                onFocusRequest={handleFocusRequest}
-                laneFocusRole={getOwnerFocusRole(node.id, node.owner)}
-                fadingIn={fadingInNodeIds.includes(node.id)}
-              />
-            ))}
-            {fadingOutNodeIds.map((id) => {
-              const node = allNodes.find((n) => n.id === id);
-              const pos = fadingOutPositions[id];
-              if (!node || !pos) return null;
-              return (
-                <NodeCard
-                  key={`fading-${id}`}
-                  node={node}
-                  position={pos}
-                  color={ownerColors[node.owner] ?? '#4f9eff'}
-                  screenToSvg={screenToSvg}
-                  onFocusRequest={handleFocusRequest}
-                  fadingOut
+              {/* Ghost edge shown while drawing a connection in design mode */}
+              {designMode && connectSourceId && ghostTarget && (
+                <GhostEdge
+                  sourcePosition={adjustedPositions[connectSourceId]}
+                  targetPoint={ghostTarget}
                 />
-              );
-            })}
-          </g>
+              )}
+            </g>
+            <g id="nodes-layer">
+              {visibleNodes
+                .filter((node) => !hiddenNodeIds.has(node.id))
+                .map((node) => {
+                  const nodePos = adjustedPositions[node.id] ?? { x: 0, y: 0 };
+                  return (
+                    <NodeCard
+                      key={node.id}
+                      node={node}
+                      position={nodePos}
+                      color={ownerColors[node.owner] ?? "#4f9eff"}
+                      screenToSvg={screenToSvg}
+                      onFocusRequest={handleFocusRequest}
+                      laneFocusRole={getOwnerFocusRole(node.id, node.owner)}
+                      entranceDelay={nodeEntranceDelay[node.id] ?? 0}
+                      animate={!suppressEntrance}
+                    />
+                  );
+                })}
+              {fadingOutNodeIds.map((id) => {
+                const node = allNodes.find((n) => n.id === id);
+                const pos = fadingOutPositions[id];
+                if (!node || !pos) return null;
+                return (
+                  <NodeCard
+                    key={`fading-${id}`}
+                    node={node}
+                    position={pos}
+                    color={ownerColors[node.owner] ?? "#4f9eff"}
+                    screenToSvg={screenToSvg}
+                    onFocusRequest={handleFocusRequest}
+                    fadingOut
+                    animate={false}
+                  />
+                );
+              })}
+            </g>
 
-          {/* Collapsed group polygons — drawn above nodes */}
-          <g id="groups-collapsed-layer">
-            {(() => {
-              const hiddenGroupIds = getHiddenGroupIds(groups);
-              return groups.filter((g) => g.collapsed && !hiddenGroupIds.has(g.id) && !phaseHiddenGroupIds.has(g.id));
-            })().map((group) => {
-              const groupColor = ownerColors[group.owners[0]] ?? '#4f9eff';
-              const nestLevel = computeGroupNestLevel(group.id, groups);
-              const pos = adjustedPositions[group.id] ?? { x: 0, y: 0 };
-              return (
-                <GroupCard
-                  key={group.id}
-                  group={group}
-                  position={pos}
-                  color={groupColor}
-                  childPositions={[]}
-                  screenToSvg={screenToSvg}
-                  nestLevel={nestLevel}
-                  onToggleCollapse={handleGroupToggle}
-                  laneMetrics={laneMetrics}
-                  viewMode={viewMode}
-                  laneFocusRole={getOwnerFocusRole(group.id, group.owners[0] ?? '')}
-                />
-              );
-            })}
+            {/* Collapsed group polygons — drawn above nodes */}
+            <g id="groups-collapsed-layer">
+              {(() => {
+                const hiddenGroupIds = getHiddenGroupIds(groups);
+                return groups.filter(
+                  (g) =>
+                    g.collapsed &&
+                    !hiddenGroupIds.has(g.id) &&
+                    !phaseHiddenGroupIds.has(g.id),
+                );
+              })().map((group) => {
+                const groupColor = ownerColors[group.owners[0]] ?? "#4f9eff";
+                const nestLevel = computeGroupNestLevel(group.id, groups);
+                const pos = adjustedPositions[group.id] ?? { x: 0, y: 0 };
+                return (
+                  <GroupCard
+                    key={group.id}
+                    group={group}
+                    position={pos}
+                    color={groupColor}
+                    childPositions={[]}
+                    screenToSvg={screenToSvg}
+                    nestLevel={nestLevel}
+                    onToggleCollapse={handleGroupToggle}
+                    laneMetrics={laneMetrics}
+                    viewMode={viewMode}
+                    laneFocusRole={getOwnerFocusRole(
+                      group.id,
+                      group.owners[0] ?? "",
+                    )}
+                    entranceDelay={
+                      Math.max(0, Math.round(pos.x / (NODE_W + GAP_X))) * 120
+                    }
+                    animate={!suppressEntrance}
+                  />
+                );
+              })}
+            </g>
           </g>
-
-          </g>{/* end graph-content */}
+          {/* end graph-content */}
         </g>
 
         {/* Phase header strips — rendered as a sibling to #graph-root so they always
@@ -1027,7 +1435,7 @@ export function Canvas() {
         <g
           id="phase-headers-overlay"
           transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}
-          style={{ willChange: 'transform' }}
+          style={{ willChange: "transform" }}
         >
           <PhaseLayer
             phases={phases}
@@ -1044,7 +1452,9 @@ export function Canvas() {
             onPhaseClick={(id) => setSelectedPhaseId(id)}
             onPhaseDoubleClick={(id) => togglePhaseCollapse(id)}
             onToggleCollapse={togglePhaseCollapse}
-            onCollapsedHover={(phaseId, cx, cy) => setCollapsedPhaseHover({ phaseId, clientX: cx, clientY: cy })}
+            onCollapsedHover={(phaseId, cx, cy) =>
+              setCollapsedPhaseHover({ phaseId, clientX: cx, clientY: cy })
+            }
             onCollapsedHoverEnd={() => setCollapsedPhaseHover(null)}
             renderPart="headers"
             transform={transform}
@@ -1064,8 +1474,12 @@ export function Canvas() {
           <span className={styles.focusBannerText}>
             Focus: <strong>{focusedNode.name}</strong>
           </span>
-          <span className={styles.focusBannerHint}>Esc or double-click background to exit</span>
-          <button className={styles.focusBannerClose} onClick={exitFocusMode}>✕</button>
+          <span className={styles.focusBannerHint}>
+            Esc or double-click background to exit
+          </span>
+          <button className={styles.focusBannerClose} onClick={exitFocusMode}>
+            ✕
+          </button>
         </div>
       )}
 
@@ -1081,7 +1495,7 @@ export function Canvas() {
 
       {/* Lane Crowns — sticky owner labels on the left edge when lane labels scroll off-screen.
           Shown in lanes mode whenever the user pans right or zooms in past x=0. */}
-      {hasData && viewMode === 'lanes' && (
+      {hasData && viewMode === "lanes" && (
         <LaneCrowns
           nodes={visibleNodes}
           laneMetrics={laneMetrics}
@@ -1102,7 +1516,11 @@ export function Canvas() {
           inViewportPhaseIds={inViewportPhaseIds}
           collapsedPhaseIds={collapsedPhaseIds}
           onFocusPhase={setFocusedPhaseId}
-          onCreatePhase={() => document.dispatchEvent(new CustomEvent('flowgraph:create-phase', { detail: {} }))}
+          onCreatePhase={() =>
+            document.dispatchEvent(
+              new CustomEvent("flowgraph:create-phase", { detail: {} }),
+            )
+          }
           onToggleCollapse={togglePhaseCollapse}
           onCollapseAll={collapseAllPhases}
           onExpandAll={expandAllPhases}
@@ -1113,7 +1531,7 @@ export function Canvas() {
       {hasData && focusedOwner && ownerFocusSets && (
         <OwnerFocusBar
           focusedOwner={focusedOwner}
-          ownerColor={ownerColors[focusedOwner] ?? '#4f9eff'}
+          ownerColor={ownerColors[focusedOwner] ?? "#4f9eff"}
           upstreamCount={ownerFocusSets.upstreamIds.size}
           downstreamCount={ownerFocusSets.downstreamIds.size}
           hiddenLaneCount={ownerFocusSets.hiddenLaneCount}
@@ -1122,22 +1540,29 @@ export function Canvas() {
       )}
 
       {/* Collapsed phase hover card — shown while hovered or animating out */}
-      {collapsedPhaseHover && canvasWrapRef.current && (collapsedPhaseIds.includes(collapsedPhaseHover.phaseId) || collapsedPhaseHiding) && (() => {
-        const ph = phases.find((p) => p.id === collapsedPhaseHover.phaseId);
-        if (!ph) return null;
-        return (
-          <PhaseHoverCard
-            phase={ph}
-            allNodes={allNodes}
-            groups={groups}
-            clientX={collapsedPhaseHover.clientX}
-            clientY={collapsedPhaseHover.clientY}
-            canvasRect={canvasWrapRef.current.getBoundingClientRect()}
-            isHiding={collapsedPhaseHiding || !collapsedPhaseIds.includes(collapsedPhaseHover.phaseId)}
-            onExpand={() => togglePhaseCollapse(collapsedPhaseHover.phaseId)}
-          />
-        );
-      })()}
+      {collapsedPhaseHover &&
+        canvasWrapRef.current &&
+        (collapsedPhaseIds.includes(collapsedPhaseHover.phaseId) ||
+          collapsedPhaseHiding) &&
+        (() => {
+          const ph = phases.find((p) => p.id === collapsedPhaseHover.phaseId);
+          if (!ph) return null;
+          return (
+            <PhaseHoverCard
+              phase={ph}
+              allNodes={allNodes}
+              groups={groups}
+              clientX={collapsedPhaseHover.clientX}
+              clientY={collapsedPhaseHover.clientY}
+              canvasRect={canvasWrapRef.current.getBoundingClientRect()}
+              isHiding={
+                collapsedPhaseHiding ||
+                !collapsedPhaseIds.includes(collapsedPhaseHover.phaseId)
+              }
+              onExpand={() => togglePhaseCollapse(collapsedPhaseHover.phaseId)}
+            />
+          );
+        })()}
 
       {/* Minimap — bottom right corner overview */}
       <MiniMap
@@ -1154,35 +1579,58 @@ export function Canvas() {
           className={styles.zoomBtn}
           onClick={() => {
             const newK = Math.min(3, transform.k * 1.2);
-            const canvas = document.getElementById('canvas-wrap');
+            const canvas = document.getElementById("canvas-wrap");
             if (!canvas) return;
             const { width: w, height: h } = canvas.getBoundingClientRect();
-            setTransform({ x: w/2 - (w/2 - transform.x) * (newK/transform.k), y: h/2 - (h/2 - transform.y) * (newK/transform.k), k: newK });
+            setTransform({
+              x: w / 2 - (w / 2 - transform.x) * (newK / transform.k),
+              y: h / 2 - (h / 2 - transform.y) * (newK / transform.k),
+              k: newK,
+            });
           }}
           title="Zoom in"
-        >+</button>
+        >
+          +
+        </button>
         <div className={styles.zoomLabel}>{Math.round(transform.k * 100)}%</div>
         <button
           className={styles.zoomBtn}
           onClick={() => {
             const newK = Math.max(0.1, transform.k * 0.83);
-            const canvas = document.getElementById('canvas-wrap');
+            const canvas = document.getElementById("canvas-wrap");
             if (!canvas) return;
             const { width: w, height: h } = canvas.getBoundingClientRect();
-            setTransform({ x: w/2 - (w/2 - transform.x) * (newK/transform.k), y: h/2 - (h/2 - transform.y) * (newK/transform.k), k: newK });
+            setTransform({
+              x: w / 2 - (w / 2 - transform.x) * (newK / transform.k),
+              y: h / 2 - (h / 2 - transform.y) * (newK / transform.k),
+              k: newK,
+            });
           }}
           title="Zoom out"
-        >−</button>
+        >
+          −
+        </button>
       </div>
 
       {/* Edge delete tooltip — shown when hovering an edge in design mode */}
-      <div id="edge-delete-tip" className={styles.edgeDeleteTip} style={{ display: 'none' }}>
+      <div
+        id="edge-delete-tip"
+        className={styles.edgeDeleteTip}
+        style={{ display: "none" }}
+      >
         🗑 Click to delete connection
       </div>
 
       {/* Node hover tooltip — shows full name + tags when hovering a node */}
       {(() => {
-        if (!hoveredNodeId || !tooltipPos || isMouseDown) return null;
+        if (
+          !hoveredNodeId ||
+          !tooltipPos ||
+          isMouseDown ||
+          focusMode ||
+          tooltipHidden
+        )
+          return null;
         const hovNode = allNodes.find((n) => n.id === hoveredNodeId);
         if (!hovNode) return null;
         const wrap = canvasWrapRef.current;
@@ -1192,9 +1640,10 @@ export function Canvas() {
         const OFFSET_X = 14;
         const OFFSET_Y = -12;
         let left = tooltipPos.x + OFFSET_X;
-        let top  = tooltipPos.y + OFFSET_Y;
+        let top = tooltipPos.y + OFFSET_Y;
         // Clamp so tooltip never overflows the canvas container
-        if (left + TOOLTIP_W > wrapW - 8) left = tooltipPos.x - TOOLTIP_W - OFFSET_X;
+        if (left + TOOLTIP_W > wrapW - 8)
+          left = tooltipPos.x - TOOLTIP_W - OFFSET_X;
         if (top < 8) top = tooltipPos.y + 24;
         if (top + 80 > wrapH - 8) top = tooltipPos.y - 80;
         return (

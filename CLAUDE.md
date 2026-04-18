@@ -6,9 +6,7 @@ Built completely with **Claude Code**. Authored by **Giang Tran**.
 
 ## What This App Is
 
-FlowGraph is a browser-based interactive dependency flowchart viewer and editor.
-Users load, create, and edit directed acyclic graphs (DAGs) stored as JSON files.
-No server required — runs entirely in the browser and can be hosted on GitHub Pages.
+FlowGraph is a browser-based interactive DAG viewer and editor. Users load, create, and edit directed acyclic graphs stored as JSON files. No server — runs entirely in the browser, hosted on GitHub Pages.
 
 ---
 
@@ -28,45 +26,43 @@ No server required — runs entirely in the browser and can be hosted on GitHub 
 ## Behavioral Rules (Always Apply)
 
 ### When to Use Subagents
-- Use an **Explore** agent when the task requires understanding a complex system across multiple files before any code is written.
-- Use a **Plan** agent when the task touches 3+ files or needs an architectural decision before implementation.
-- Use a **general-purpose** agent for deep research, open-ended codebase searches, or tasks where you are not confident a simple Glob/Grep will find the right answer in 1–2 tries.
-- Spawn subagents **in parallel** when multiple independent sub-tasks can run simultaneously — do not serialize work that can be parallelized.
-- Do NOT spawn subagents for simple, directed lookups (known file path, specific symbol) — use Glob/Grep/Read directly.
+- **Explore**: complex system spanning multiple files before any code is written.
+- **Plan**: task touches 3+ files or needs an architectural decision.
+- **general-purpose**: open-ended search where graph tools + Glob/Grep won't find the answer in 1–2 tries.
+- Spawn **in parallel** when sub-tasks are independent — never serialize parallelizable work.
+- Do NOT spawn for simple lookups — use graph tools or Grep/Read directly.
 
 ### Planning Before Coding
-- Read CLAUDE.md and memory files FIRST. Only reach for Explore/Grep/Read if what you need is genuinely not already in context.
-- For multi-file work: build a concrete plan (file order, exact changes, reasoning) before touching any file. Share the plan with the user.
-- Before writing any code, confirm the root cause is understood — not just the symptom.
+- Read CLAUDE.md and memory files FIRST. Use graph tools before Grep/Glob/Read.
+- Multi-file work: build a concrete plan (file order, exact changes, reasoning) before touching any file. Share it.
+- Confirm root cause before writing any code — not just the symptom.
 
 ### Implementation Discipline
-- Work on ONE file at a time, completely finish it, then move to the next. No jumping between files mid-task.
-- Never be ad-hoc or erratic — follow the plan in the stated order.
-- Prefer refactoring to the correct abstraction over layering workarounds.
-- Do not pursue surface-level "just make it work" patches — find and fix the root cause.
-- **Do not be lazy.** Always find the root cause and fix from there. Pursue elegant solutions — not the quickest patch that happens to work. If the clean fix requires more work, do the work.
+- ONE file at a time, completely finished, then move to next. No mid-task jumping.
+- Follow the plan in stated order.
+- Prefer the correct abstraction over workarounds.
+- **Find and fix the root cause.** Never patch the symptom. If the clean fix requires more work, do the work.
 
 ### Node–Group Parity Principle
-Every feature and bug fix that applies to a node must work identically for a group. Groups are not a separate concept — they are a higher-level unit that behaves like a node from the outside.
+Every feature/fix that applies to a node must work identically for a group.
 
-- **Connectors**: A group's connectors = union of all connectors of all descendant nodes at every nesting depth.
-- **When node and group are in separate files**: fix node first, verify, then apply the same fix to group. Never leave one broken.
-- **When node and group share co-located code**: fix both in the same pass.
-- **Checklist for every feature/fix touching nodes**: Does it involve connectors? hover/highlight? phase membership? selection? drag? undo? — Apply the same logic to groups.
+- **Connectors**: group connectors = union of all descendant node connectors at every depth.
+- Separate files: fix node first, verify, then apply same fix to group.
+- Co-located code: fix both in the same pass.
+- **Checklist**: connectors? hover/highlight? phase membership? selection? drag? undo? cinema roles? → apply to groups.
 
 ---
 
 ## Commands
 
 ```bash
-npm run dev           # Vite dev server (hot reload)
-npm run build         # tsc + vite build → dist/
-npm run preview       # Preview the production build locally
-npm run lint          # ESLint over src/
+npm run dev     # Vite dev server (hot reload)
+npm run build   # tsc + vite build → dist/
+npm run preview # Preview production build
+npm run lint    # ESLint
 ```
 
-The only build command needed before committing is `npm run build`. If it passes
-TypeScript compilation (`tsc`) and Vite bundling with no errors, the code is ready.
+`npm run build` is the only pre-commit check needed. Passes tsc + Vite = ready.
 
 ---
 
@@ -81,320 +77,172 @@ TypeScript compilation (`tsc`) and Vite bundling with no errors, the code is rea
 | Rendering | Native SVG (no D3/Cytoscape)                                                        |
 | File I/O  | File System Access API (Chrome/Edge) with `<input type="file">` / download fallback |
 
----
-
-## Project Structure
-
-```
-public/
-└── samples/                    Bundled sample JSON files (imported directly by samples.ts — no fetch needed)
-    ├── starter.json            7-node starter workflow
-    └── bhs-process-map.json    200+ node real-world BHS example
-src/
-├── App.tsx                     Root layout: Header | (Sidebar + Canvas + Inspector)
-├── App.module.css
-├── main.tsx
-├── styles/
-│   └── global.css              CSS custom properties (design tokens) + keyframes + print CSS
-├── types/
-│   ├── graph.ts                All TypeScript interfaces: GraphNode, GraphEdge, GraphPhase, GraphGroup,
-│   │                           GraphMeta, NodeTag, Transform, Position, …
-│   └── fileSystem.d.ts         File System Access API type stubs (showOpenFilePicker, showSaveFilePicker)
-├── store/
-│   └── graphStore.ts           Single Zustand store — ALL app state and actions live here
-├── utils/
-│   ├── layout.ts               DAG layout (Sugiyama-style) + lane layout algorithms
-│   ├── grouping.ts             Group hierarchy queries, connectivity validation, polygon geometry
-│   ├── colors.ts               Owner → hex color assignment
-│   ├── exportJson.ts           JSON serialization: buildExportPayload() + exportGraphToJson()
-│   ├── exportPdf.ts            SVG-based PDF export via window.print() — current view or full chart
-│   └── samples.ts              SAMPLE_FILES registry — bundles sample JSON data for offline use
-├── adapters/
-│   ├── adapterInterface.ts     GraphAdapter base interface (load / save)
-│   ├── fileAdapter.ts          Local JSON file adapter
-│   └── sharepointAdapter.ts    SharePoint/OneDrive stub (Microsoft Graph API)
-└── components/
-    ├── Header/                 File ops, search, view toggle, save/save-as/reload/export, design mode
-    ├── Canvas/                 SVG canvas, pan/zoom, NodeCard, EdgeLayer, GroupCard, LaneLayer, GhostEdge, MiniMap,
-    │                           PhaseLayer (vertical bands), PhaseNavigator (floating pill bar), PhaseCrowns
-    ├── Panels/                 Sidebar (owner filter) + Inspector (selected node/group/phase details)
-    ├── DesignMode/             DesignToolbar + NodeEditModal + GroupEditModal + PhaseEditModal
-    └── Modals/                 UserGuideModal (Shift+?), HelpModal, SamplePickerModal
-```
+Use `get_architecture_overview` for file/component structure.
 
 ---
 
 ## Architecture Rules
 
 ### State
-
 - **All state lives in `graphStore.ts`**. No component-level state for graph data.
 - Components call store actions; actions update state; React re-renders.
 - Never mutate store state directly from a component.
 
-### JSON Format
-
-```json
-{
-  "_meta": {
-    "note": "Created with FlowGraph",
-    "app": "FlowGraph",
-    "author": "Author Name",
-    "usage": "Usage instructions"
-  },
-  "nodes": [
-    {
-      "id": "STEP-01",
-      "name": "Step name (≤60 chars)",
-      "owner": "Team name (determines swim lane + color)",
-      "description": "1–3 sentences.",
-      "dependencies": ["ID-OF-PREREQ"],
-      "tags": [{ "label": "urgent", "color": "#ef4444" }]
-    }
-  ],
-  "groups": [
-    {
-      "id": "GROUP-01",
-      "name": "Group name",
-      "description": "Optional description.",
-      "owners": ["Team name"],
-      "childNodeIds": ["STEP-01", "STEP-02"],
-      "childGroupIds": [],
-      "collapsed": false
-    }
-  ],
-  "phases": [
-    {
-      "id": "PHASE-01",
-      "name": "Discovery",
-      "description": "Optional detail.",
-      "color": "#4A90D9",
-      "nodeIds": ["STEP-01", "STEP-02"],
-      "groupIds": ["GROUP-01"],
-      "sequence": 0
-    }
-  ],
-  "tagRegistry": [{ "label": "urgent", "color": "#ef4444" }],
-  "ownerRegistry": ["Team A", "Team B"],
-  "_layout": {
-    "currentView": "dag",
-    "dag":   { "positions": { "STEP-01": { "x": 0, "y": 0 } }, "transform": { "x": 0, "y": 0, "k": 1 } },
-    "lanes": { "positions": { "..." : {} }, "transform": { "x": 0, "y": 0, "k": 1 } }
-  }
-}
-```
-
-- `_meta` — always written on save; round-trips unchanged; defaults filled from `DEFAULT_META` in `exportJson.ts`.
-- `tags` on nodes — optional; omitted when empty.
-- `groups`, `phases`, `tagRegistry`, `ownerRegistry` — all optional; omitted when empty.
-- `phases[].groupIds` — optional; omitted when empty. Assigns collapsed groups to a phase (parallel to `nodeIds`).
-- `_layout` — omitted when no positions have been saved yet.
-- Legacy format (plain `[ ... ]` array, no `_layout`) is still accepted on load.
+### JSON Format (non-obvious rules only — full schema in `types/graph.ts`)
+- `groups`, `phases`, `tagRegistry`, `ownerRegistry` — omitted when empty.
+- `phases[].groupIds` — optional; assigns collapsed groups to a phase (parallel to `nodeIds`).
+- `_layout` — omitted when no positions saved yet. Legacy plain array format still accepted on load.
+- `cinemaScript`, `cinemaBottleneck`, `cinemaSkip` on nodes and groups — optional; omitted when not set.
 
 ### Serialization
+`buildExportPayload()` in `exportJson.ts` is the **single source of truth**. All save paths call it — never duplicate.
 
-`buildExportPayload()` in `exportJson.ts` is the **single source of truth** for
-serialization. All save paths (in-place write, Save As, and download fallback) call
-this function. Never duplicate the serialization logic.
-
-`buildExportPayload` signature (all params after `phases` are optional):
-```ts
-buildExportPayload(nodes, currentView, dagLayout, lanesLayout, groups?, phases?, tagRegistry?, ownerRegistry?, meta?)
-```
-
-Every call site in `Header.tsx` must pass all optional fields. Update `useCallback`
-dep arrays when adding new fields.
+**Adding a new serialized top-level field** (4 required touch points):
+1. `types/graph.ts` — define the interface.
+2. `graphStore.ts` — add to state, `clearGraph`, `loadData` (extract from `savedLayout` cast with `?? []` / `?? null`).
+3. `exportJson.ts` — add param to `buildExportPayload()`. Emit conditionally (omit when empty).
+4. `Header.tsx` — extract from `obj` in `parseAndLoad()`, attach to `savedLayout`; add to every call site; update `useCallback` dep arrays.
 
 ### File I/O Modes
+| Mode                     | When                                                   | Save behaviour                |
+| ------------------------ | ------------------------------------------------------ | ----------------------------- |
+| **Linked** (teal chip)   | Opened via `showOpenFilePicker` / `showSaveFilePicker` | Writes directly to disk       |
+| **Unlinked** (gray chip) | `<input type="file">` (Firefox/Safari) or new chart   | Downloads to Downloads folder |
 
-| Mode                     | When                                                                  | Save behaviour                                  |
-| ------------------------ | --------------------------------------------------------------------- | ----------------------------------------------- |
-| **Linked** (teal chip)   | Opened via `showOpenFilePicker` / `showSaveFilePicker` in Chrome/Edge | Writes directly to file on disk — no download   |
-| **Unlinked** (gray chip) | Opened via `<input type="file">` (Firefox/Safari) or new flowchart   | Downloads a copy to the user's Downloads folder |
+After Save As, returned `FileSystemFileHandle` replaces old handle; `currentFileName` updates.
 
-After **Save As**, the returned `FileSystemFileHandle` replaces the old handle and
-`currentFileName` is updated to the new filename — so subsequent saves go to the new location.
+### PDF Export (design decisions — see `exportPdf.ts` for impl)
+- **DOM isolation**: walks up from `#canvas-wrap` hiding siblings — more reliable than `@media print`.
+- **`<defs>` must be a direct child of `<svg>`** (not inside `<g>`) — browsers silently ignore nested `<defs>`.
+- **Grid uses explicit `<line>` elements, not `<pattern>`** — SVG patterns inside `<g>` are unreliable across PDF renderers.
+- **Arrowhead color**: `#arrow-dyn` uses `fill="currentColor"`; edges set `style.color` so arrowheads inherit automatically.
+- All DOM changes reverted in `afterprint`; cleanup is idempotent (safe on Safari's early-fire).
 
-### PDF Export
-
-`exportPdf.ts` exports via `window.print()`. Signature:
-
-```ts
-exportToPdf(mode: 'current' | 'full', positions?, _ownerColors?, _nodeOwnerMap?, _transform?, viewMode?)
-```
-
-All DOM changes are reverted in `afterprint`:
-
-1. **DOM isolation** — walks up from `#canvas-wrap` to `<body>`, hides all siblings with `visibility:hidden`. Forces `#canvas-wrap` to `position:fixed; inset:0; background:#fff; z-index:99999`. More reliable than `@media print` CSS for hiding the sidebar/header.
-2. **ViewBox setup**:
-   - `'full'`: `computeFullBBox()` computes positions bbox + `PADDING=80`. In `'lanes'` mode, `minX` is clamped to `≤ -PADDING/2` so lane labels (drawn at x=0) are included. Sets viewBox; resets `#graph-root` transform to identity.
-   - `'current'`: sets viewBox to `"0 0 svgW svgH"` (canvas pixel dimensions). The `#graph-root` transform is left untouched — renders exactly what's on-screen.
-3. **Grid injection** — two injections, both removed in `afterprint`:
-   - `injectBlackArrow()` inserts `<defs id="pdf-arrow-defs">` as a **direct child of `<svg>`** (not inside `<g>` — browsers silently ignore `<defs>` nested in `<g>`). Defines `#arrow-pdf-black` with black fill `#222`.
-   - `injectBackgroundAndGrid()` inserts `<g id="pdf-bg-grid">` before `#graph-root` — a white `<rect>` covering the full viewBox, then explicit `<line>` elements for minor (`#d8e6ed`, 0.3px) and major (`#b8cdd8`, 0.6px) grid lines. Uses **explicit lines, not SVG patterns** — patterns in `<defs>` inside `<g>` are unreliable across PDF renderers. Spacing: `minor = clamp(round(vbW/35), 20, 100)`, `major = minor × 5`.
-4. **Edge colorization** — every `.edge-vis` reads `data-edge-from` on its parent `<g>`, looks up `nodeOwnerMap[fromId]` → `ownerColors[owner]`, sets `stroke` and `style.color` to that color, `stroke-width=2`, `opacity=1`, `marker-end=url(#arrow-dyn)`. The `#arrow-dyn` marker uses `fill="currentColor"` so arrowheads inherit edge color automatically.
-5. Calls `window.print()`.
-6. `afterprint`: `restoreIsolation()`, removes injected elements, restores edge attributes and viewBox/transform.
-
-Print CSS in `global.css` (`@media print`): SVG forced to `100vw × 100vh`; `print-color-adjust: exact`; `#canvas-wrap::before` hidden; non-SVG children of `#canvas-wrap` hidden (minimap, banners, tooltips).
-
-### Custom Events (Component Decoupling)
-
-| Event                        | Fired by                                | Handled by        |
-| ---------------------------- | --------------------------------------- | ----------------- |
-| `flowgraph:open-guide`       | App.tsx (Shift+?) / Header              | UserGuideModal    |
-| `flowgraph:guide-state`      | Header (📖 button)                      | UserGuideModal    |
-| `flowgraph:help-state`       | Header (📋 button)                      | HelpModal         |
-| `flowgraph:toggle-sidebar`   | Header                                  | Sidebar           |
-| `flowgraph:toggle-inspector` | Header (▣ button)                       | Inspector         |
-| `flowgraph:open-file-picker` | Canvas empty state                      | Header            |
-| `flowgraph:add-node`         | Canvas click (add tool)                 | NodeEditModal     |
-| `flowgraph:create-group`     | DesignToolbar (multi-select)            | GroupEditModal    |
-| `flowgraph:edit-group`       | GroupCard dblclick / Inspector          | GroupEditModal    |
-| `flowgraph:create-phase`     | DesignToolbar / PhaseNavigator "+" pill | PhaseEditModal    |
-| `flowgraph:edit-phase`       | PhaseLayer dblclick / Inspector         | PhaseEditModal    |
-| `flowgraph:pick-sample`      | Canvas empty state "Try Sample" button  | SamplePickerModal |
-| `flowgraph:load-sample`      | SamplePickerModal (on selection)        | Header            |
-
-`flowgraph:create-phase` carries `detail: { nodeIds?: string[], groupIds?: string[] }`.
-
-`flowgraph:edit-phase` carries `detail: { phaseId: string }`.
-
-`flowgraph:load-sample` carries `detail: { file: string, data: unknown }` — `data` is the pre-bundled JSON object (no fetch needed, works offline/file://).
-
-### Responsive Header
-
-All button text is wrapped in `<span className={styles.btnLabel}>`. At `< 920px` this class is hidden, leaving icon-only buttons. Tooltips always carry the full label.
-
-### Stable DOM IDs
-
-These IDs are used for direct DOM access — do not remove or rename them:
-
-| ID               | Element                                                         |
-| ---------------- | --------------------------------------------------------------- |
-| `#canvas-wrap`   | Outer canvas container `<div>`                                  |
-| `#graph-root`    | SVG `<g>` that receives the pan/zoom transform                  |
-| `#graph-content` | Inner `<g>` wrapping lanes/edges/nodes (keyed for fade-in)      |
-| `#phase-layer`   | `<g>` containing all PhaseLayer bands (inside `#graph-content`) |
-| `#lanes-layer`   | `<g>` containing LaneLayer elements (inside `#graph-content`)   |
-| `#edge-delete-tip` | Floating edge-delete tooltip                                  |
+### Stable DOM IDs (do not rename)
+| ID                 | Element                                        |
+| ------------------ | ---------------------------------------------- |
+| `#canvas-wrap`     | Outer canvas container `<div>`                 |
+| `#graph-root`      | SVG `<g>` receiving pan/zoom transform         |
+| `#graph-content`   | Inner `<g>` wrapping lanes/edges/nodes         |
+| `#phase-layer`     | `<g>` for PhaseLayer bands                     |
+| `#lanes-layer`     | `<g>` for LaneLayer                            |
+| `#edge-delete-tip` | Floating edge-delete tooltip                   |
 
 ### Groups
-
-Groups are hierarchical collections of nodes and/or sub-groups.
-
-- **Polygon sides** = 4 + nesting depth (top-level = pentagon/5, child = hexagon/6, …)
-- **Collapsed**: renders as a labelled polygon; edges from/to members reroute to the polygon boundary
-- **Expanded**: renders as a translucent bounding box behind children
-- **Multi-select creation**: Shift+click nodes in design mode → "Create Group" validates connectivity, derives owners, opens GroupEditModal
-- **Serialization**: `groups` array written by `buildExportPayload()` and read by `loadData()`
-- **Hierarchy utilities** (`grouping.ts`): `getGroupDepth()`, `getGroupAncestors()`, `validateGroupConnectivity()`, `deriveGroupOwners()`, `computeGroupPolygon()`
+- **Polygon sides** = 4 + nesting depth (top-level = 5/pentagon, child = 6/hexagon, …)
+- **Collapsed**: labelled polygon; edges to/from members reroute to polygon boundary.
+- **Expanded**: translucent bounding box behind children.
+- Multi-select creation: Shift+click nodes in design mode → "Create Group" validates connectivity, derives owners.
 
 ### Phases
+Flat time/progress bands rendered as vertical columns behind nodes.
 
-Phases are flat (non-nested) time/progress bands rendered as **vertical columns** behind nodes, capturing the _when_ dimension (e.g. Discovery → Build → Deploy).
-
-- **Rendering**: `PhaseLayer.tsx` — SVG `<g>` elements inside `#phase-layer`, drawn first (behind all other content). Each band bounded by `min(x)` / `max(x + NODE_W)` of assigned nodes ± `PHASE_PAD_X = 30px`.
-- **DAG vs Lane mode**: In DAG mode bands are tight envelopes (rounded rect) around their nodes. In Lane mode bands are full-height columns.
-- **Band anatomy**: fill rect + header strip (32px, more opaque) + dashed border + numbered badge + name text
-- **Opacity states**:
-  - Normal: fill 4%, header 16%
-  - Hovered: fill 8%, header 22%
-  - Focused (spotlit): fill 12%, header 30%
-  - Ghosted (another phase spotlit): fill 1%, header 1%
-- **Canvas height tracking**: `Canvas.tsx` uses a `ResizeObserver` on `#canvas-wrap`. SVG-space band height = `pixelH / k + |offsetY / k| + 200`.
-- **Navigator**: `PhaseNavigator.tsx` — floating pill bar at `bottom: 56px; left: 50%`. Pills sorted by `phase.sequence`. Active pill = solid color + white text. Auto-hides when no phases exist (except in design mode, where "+" always shows).
-- **Spotlight**: `focusedPhaseId` drives ghosting. Navigator pill click sets it; clicking "All" or the active pill again clears it to `null`.
-- **Selection**: clicking a band sets `selectedPhaseId` and clears `selectedNodeId` / `selectedGroupId`.
-- **Edit flow**: double-clicking a band (design mode only) fires `flowgraph:edit-phase`. Inspector shows "Edit Phase" and "Delete Phase" buttons in design mode.
-- **Node assignment**: a node belongs to at most one phase. `assignNodesToPhase()` removes the node from all other phases first. `createPhase()` does the same for pre-selected nodeIds.
-- **Group membership** (`groupIds`): `GraphPhase` carries an optional `groupIds?: string[]` for collapsed groups assigned to the phase. `assignGroupsToPhase()` / `removeGroupsFromPhase()` mirror the node variants. Band bounds computation in `PhaseLayer` includes group positions. Serialization omits `groupIds` when empty.
-- **Collapse/Expand**: `collapsePhase` / `expandPhase` / `togglePhaseCollapse` store actions exist. `collapsedPhaseIds: string[]` in store state. `computePhaseAdjustedPositions()` in `layout.ts` shifts non-collapsed content left at render time without mutating stored positions. Collapsed strip = `COLLAPSED_W` px wide. `hiddenNodeIds` suppresses rendering of member nodes.
-- **Sequence**: auto-assigned as `max(existing sequences) + 1`. Gaps are allowed. Bands render left-to-right by sequence regardless of node x-positions.
-- **ID format**: `PHASE-01`, `PHASE-02`, … (not guaranteed contiguous after deletes).
-- **Color palette**: `PHASE_PALETTE` in `types/graph.ts` — 8 hex strings `as const`. Auto-assigned round-robin (`phases.length % 8`). Always use `useState<string>(PHASE_PALETTE[0])` — the explicit generic prevents TypeScript literal-type narrowing errors.
-- **Serialization**: `buildExportPayload()` includes `phases` only when non-empty. `loadData()` extracts phases via `(savedLayout as { phases?: GraphPhase[] } | null)?.phases ?? []`. `Header.tsx` attaches `obj.phases` to `savedLayout` during file parse.
-- **Undo**: phase mutations push `UndoSnapshot` with `phases?: GraphPhase[]`, but undo/redo do NOT yet restore phases — phases survive undo. Known gap.
-- **PDF export**: phase bands are inside `#graph-root` and print automatically via the existing print CSS.
+- **DAG mode**: tight envelope (rounded rect) around assigned nodes. **Lane mode**: full-height columns.
+- **Opacity**: normal fill 4%/header 16%; hovered 8%/22%; spotlit 12%/30%; ghosted 1%/1%.
+- **Band height** must be SVG user-space: `pixelH / k + |offsetY / k| + 200` (ResizeObserver in `Canvas.tsx`).
+- **`PHASE_PALETTE`**: `as const` causes type narrowing — always `useState<string>(PHASE_PALETTE[0])`.
+- **Node assignment**: one phase per node. `assignNodesToPhase()` removes from all others first.
+- **Accordion**: `computePhaseAdjustedPositions()` shifts non-collapsed content left at render time without mutating stored positions.
+- **Known gaps**: undo doesn't restore phases; accordion only works in DAG mode; `setViewMode()` cache-hit path doesn't re-run `enforcePhaseZones`.
 
 ### Hover Highlighting
+**Positive-only**: add `.hovered` / `.neighbor` to affected elements via direct DOM manipulation. Never dim non-hovered elements — causes mass repaints.
 
-Use **positive-only hover styling**: apply `.hovered` and `.neighbor` CSS classes only to affected elements via direct DOM manipulation. Never dim or bulk-modify non-hovered elements — it causes mass repaints.
+### Cinema / Discovery Mode
+Multi-phase guided storytelling: `cinema` → `transition` → `reconstruction` | `heatmap`.
+
+**Scene types**: `genesis | terminal | fork | bottleneck | convergence | bridge | reveal | parallel | prediction`
+
+**Canvas roles** (applied via `setDiscoveryRoleMap`): `focus` (primary), `lit` (adjacent), `ghost` (0.07 opacity), `visited`, `danger` (bottleneck).
+
+**Heatmap tiers**: `hot` (≥2.0×), `warm` (≥1.0×), `cold` (<1.0×), `ice` (absent).
+
+**Author overrides on nodes/groups** (optional, serialized): `cinemaScript`, `cinemaBottleneck`, `cinemaSkip`.
+
+**Known limitations** (do not re-implement without flagging):
+- Groups not supported as blank slots in reconstruction
+- Hint is global, not per-node; counter doesn't reset per scene
+- No auto-pan to focus node on large graphs
+- Rapid double-click can record two wrong reconstruction attempts
+- No heatmap persistence across sessions
+- Collapsed groups not colored in heatmap phase
+- "Skipped" stat display not implemented
+- Role labels are first-occurrence only
+
+### Owner Focus Mode
+Lane-spotlight in Lanes view. Isolates an owner's nodes with upstream/downstream roles.
+- Edge coloring: upstream→owned = blue (`#4f9eff`), owned→downstream = amber (`#f5a623`), unrelated = ghost.
+- Node roles: `owned | upstream | downstream | partial | null` — passed as `laneFocusRole` prop.
+- Entrance animation suppressed on enter/exit (same as view-mode switch).
+
+### Entrance Animations
+Staggered on file load and focus-mode entry. Suppressed on view-mode switch, focus exit, owner-focus toggle, and filter changes.
+
+- **Node stagger**: `120ms × column + 30ms × Y rank`, capped at 600ms. `--entrance-delay` CSS var on inner `.node-entrance` `<g>` in NodeCard / collapsed GroupCard. Expanded GroupCard uses `.group-entrance-expand`.
+- **Edge stagger**: `EdgeLayer.useLayoutEffect` (empty deps — mount only) reads `getTotalLength()`, animates via Web Animations API staggered by source column. Inline styles removed after animation so JSX `strokeDasharray` takes effect.
+- **Suppress**: `.suppress-entrance` on `#graph-content` → `animation: none !important` on node/group entrance classes; `transition: none` on `.node-group` / `.group-overlay` (prevents slide-from-identity-transform on mount).
+- **Direction-aware suppression**: IIFE detects triggering render + 700ms `suppressActiveRef` window covers secondary renders (ResizeObserver, `fitToScreen` timeouts). `animateThisRender` always wins over the window.
+- **Group collapse/expand**: `group-exploding` (445ms) / `group-imploding` (380ms) — not affected by suppression.
+- **Reduced motion**: `@media (prefers-reduced-motion: reduce)` — instant, no transforms.
+
+### Animation Patterns (structural rules — prevent re-discovering these bugs)
+- **Never put animation-state classes in JSX `className`**. React re-renders restore it, undoing JS cleanup. Use `element.classList.add/remove()` imperatively only.
+- **`animateOnMount = useRef(animate)` pattern**. Freeze the prop at mount — later prop changes don't retrigger animation on already-mounted elements.
+- **`useLayoutEffect` for mount-time DOM animation**. `useEffect` fires after paint and can flash final state. Required for anything calling `getTotalLength()`, `getBoundingClientRect()`, or setting initial `style` before animating.
+- **`data-*` handshake for React-vs-JS attribute conflicts**. Set JSX attribute to `undefined`; store value in `data-marker-end`. JS cleanup reads `getAttribute` and calls `setAttribute`. React never overwrites a `data-*` it doesn't own.
+
+### Space-Key Pan
+Holding `Space` activates pan-anywhere mode regardless of active design tool. Cursor → `grab`; release restores previous cursor.
 
 ### Layout Cache
-
-`layoutCache` holds `{positions, transform}` snapshots keyed by view mode (`'dag'` / `'lanes'`). Always call `saveLayoutToCache()` after drag-drop or any manual layout change so view-mode switching restores the last arrangement exactly.
-
----
-
-## Adding New Features
-
-### New store field + action
-
-1. Add the field + action signature to the `GraphStore` interface.
-2. Add the field to the initial state object.
-3. Implement the action (`set(...)` call) in the store body.
-
-### New header button
-
-1. Add button JSX with `<span className={styles.btnLabel}>Label</span>` wrapping the text.
-2. Add styles in `Header.module.css`.
-3. Icon-only responsive behaviour is handled automatically by the `< 920px` media query.
-
-### New modal
-
-1. Create the component; listen for a custom event in `useEffect`.
-2. Dispatch the custom event from wherever it should trigger.
-3. Render the modal in `App.tsx` (outside the layout flow, at the end of the JSX).
-
-### New group action
-
-1. Add the action signature to `GraphStore`.
-2. Implement in store body using `get().groups` + `set(...)`.
-3. Ensure `buildExportPayload()` in `exportJson.ts` includes the updated groups.
-
-### New phase action
-
-1. Add the action signature to `GraphStore` (phases section).
-2. Implement in store body. Undoable mutations must push `UndoSnapshot` with `phases: [...state.phases]`.
-3. `buildExportPayload()` already serializes phases — no change needed for pure `phases[]` mutations.
-
-### New serialized top-level field
-
-Apply the same pattern used for `tagRegistry` / `ownerRegistry` / `_meta`:
-
-1. `types/graph.ts` — define the interface.
-2. `graphStore.ts` — add to state, `clearGraph`, `loadData` (extract from `savedLayout` cast with `?? []` / `?? null`), and all relevant actions.
-3. `exportJson.ts` — add param to `buildExportPayload()` and `exportGraphToJson()`. Emit conditionally (omit when empty), same pattern as other optional fields.
-4. `Header.tsx` — extract from `obj` in `parseAndLoad()` and attach to `savedLayout` cast; add to every `buildExportPayload` / `exportGraphToJson` call site; update `useCallback` dep arrays.
-
-### Updating the User Guide
-
-Edit the `SECTIONS` array in `UserGuideModal.tsx`. The search box uses `extractText()` to recursively pull plain text from JSX — no separate keyword lists needed.
+`layoutCache` holds `{positions, transform}` keyed by view mode (`'dag'` / `'lanes'`). Always call `saveLayoutToCache()` after drag-drop or manual layout change.
 
 ---
 
 ## Known Constraints & Gotchas
 
-| Issue | Cause | Fix in place |
+| Issue | Cause | Fix / Status |
 | ----- | ----- | ------------ |
-| Black square flicker on hover | SVG `filter: drop-shadow` causes GPU compositing artifacts | Stroke-based glow on `.node-main-rect`; `will-change: opacity` on `.node-group` |
-| Header covers canvas content | `overflow: visible` let filter regions paint outside SVG bounds | Changed to `overflow: hidden` |
-| Lane Y-drift on owner toggle | Old absolute Y positions become wrong when lanes shift | `toggleOwner` / `toggleAllOwners` translate Y by `newLane.y − oldLane.y` delta |
-| Firefox/Safari can't save in-place | No File System Access API | Graceful fallback: download a copy; broken-chain chip signals the mode |
-| `window.print()` synchronous on some browsers | Print dialog may close before `afterprint` fires on Safari | Cleanup is idempotent — safe to call multiple times |
-| `PHASE_PALETTE` literal type narrowing | `as const` makes `useState(PHASE_PALETTE[0])` infer `"#4A90D9"` as type | Always use `useState<string>(PHASE_PALETTE[0])` |
-| Phase bands don't cover full canvas after zoom | Band height must be in SVG user-space, not pixels | Height = `pixelH / k + |offsetY / k| + 200` via `ResizeObserver` in `Canvas.tsx` |
-| Undo does not restore phases | `undo`/`redo` store actions don't apply `phases` from the snapshot | Known gap — to fix: add `phases: prev.phases ?? state.phases` in the `undo`/`redo` `set(...)` calls |
-| Phase band invisible when phase has no positioned nodes | `PhaseLayer` skips rendering when `assignedPositions.length === 0` | Expected — band appears once at least one assigned node has a computed position |
-| Phase accordion only works in DAG mode | `adjustedPositions` in `Canvas.tsx` has a `viewMode !== 'dag'` guard | Known gap — remove the guard to extend accordion to Lane view |
-| Stale phase positions after view-mode switch | `setViewMode()` cache-hit path does not re-run `enforcePhaseZones` | Known gap — re-run `enforcePhaseZones` on cached positions before committing |
+| Black square flicker on hover | SVG `filter: drop-shadow` GPU compositing artifacts | Stroke-based glow; `will-change: opacity` on `.node-group` |
+| Header covers canvas content | `overflow: visible` lets filter regions paint outside SVG bounds | Changed to `overflow: hidden` |
+| Lane Y-drift on owner toggle | Absolute Y positions wrong when lanes shift | `toggleOwner` translates Y by `newLane.y − oldLane.y` delta |
+| Firefox/Safari can't save in-place | No File System Access API | Download fallback; broken-chain chip signals mode |
+| `window.print()` early on Safari | `afterprint` may fire before dialog closes | Cleanup is idempotent — safe to call multiple times |
+| `PHASE_PALETTE` type narrowing | `as const` narrows `useState(PHASE_PALETTE[0])` to literal | Always `useState<string>(PHASE_PALETTE[0])` |
+| Phase bands don't cover full canvas after zoom | Band height in pixels, not SVG user-space | Height = `pixelH / k + |offsetY / k| + 200` |
+| Undo doesn't restore phases | `undo`/`redo` ignore `phases` in snapshot | Known gap — add `phases: prev.phases ?? state.phases` to fix |
+| Phase band invisible with no positioned nodes | `PhaseLayer` skips when `assignedPositions.length === 0` | Expected — appears once a node has a computed position |
+| Phase accordion DAG-only | `viewMode !== 'dag'` guard in `Canvas.tsx` `adjustedPositions` | Known gap — remove guard to extend |
+| Stale phase positions on view switch | `setViewMode()` cache-hit path skips `enforcePhaseZones` | Known gap |
+| Clipboard fails on non-HTTPS | `navigator.clipboard` requires secure context | Expected — no fix planned |
+| Cinema heatmap not persisted | `discoveryEngagement` / `heatTiers` are transient store state | Known gap |
+| Collapsed groups invisible in heatmap | `GroupCard` role classes not applied when `collapsed === true` | Known gap — mirror heatmap-tier logic from NodeCard |
+| Entrance animation on view switch / focus exit | `#graph-content` remounts on key change; bulk fade always played | Direction-aware suppression: IIFE + 700ms `suppressActiveRef` window |
+| JS removes animation class; React restores it | JSX `className` and `classList.remove()` fight — React wins | Never put animation-state classes in JSX `className` |
 
 ---
 
 ## Deployment
 
-GitHub Pages via GitHub Actions. The workflow builds on push to `main` and deploys `dist/` to the `gh-pages` branch. Vite config sets `base: '/ProcessFlowChart/'`.
+GitHub Pages via GitHub Actions — push to `main` builds and deploys `dist/` to `gh-pages`. Vite base: `/ProcessFlowChart/`.
 
 - Repo: `gtran-07/ProcessFlowChart`
 - Live: `https://gtran-07.github.io/ProcessFlowChart/`
+
+---
+
+## MCP Tools: code-review-graph
+
+**ALWAYS use graph tools BEFORE Grep/Glob/Read.** Faster, cheaper, gives structural context (callers, dependents, impact radius) that file scanning cannot.
+
+| Task | Tool |
+|------|------|
+| Find a function / component | `semantic_search_nodes` |
+| Trace callers / imports | `query_graph` (callers_of / imports_of) |
+| Blast radius of a change | `get_impact_radius` |
+| Code review | `detect_changes` + `get_review_context` |
+| File/component structure | `get_architecture_overview` |
+| Execution path impact | `get_affected_flows` |
+| Rename / dead code | `refactor_tool` |
+
+Fall back to Grep/Glob/Read only when the graph doesn't cover it. Graph auto-updates on file changes via hooks.
