@@ -7,15 +7,15 @@
  *
  * For a single self-contained HTML file (offline/portable), use vite.standalone.config.ts instead.
  */
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  // Deployed at https://gtran-07.github.io/ProcessFlowChart/
-  base: '/ProcessFlowChart/',
+  // Deployed at https://gtran-07.github.io/TGRAPH/
+  base: "/TGRAPH/",
   build: {
-    outDir: 'dist',
+    outDir: "dist",
     sourcemap: true,
   },
 });

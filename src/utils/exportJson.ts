@@ -9,13 +9,24 @@
  * What does NOT belong here: any React state, DOM manipulation beyond the download link.
  */
 
-import type { GraphNode, GraphGroup, GraphPhase, GraphMeta, NodeTag, Position, Transform, CinemaEngagementMap, PathType } from '../types/graph';
+import type {
+  GraphNode,
+  GraphGroup,
+  GraphPhase,
+  GraphMeta,
+  NodeTag,
+  Position,
+  Transform,
+  CinemaEngagementMap,
+  PathType,
+} from "../types/graph";
 
 const DEFAULT_META: GraphMeta = {
-  note: 'This is a FlowGraph chart file. Open it with the FlowGraph app to view and edit the interactive dependency flowchart.',
-  app: 'https://gtran-07.github.io/ProcessFlowChart/',
-  author: 'Giang Tran',
-  usage: 'In the app: click the folder icon (or drag-and-drop this file) to load it. Use Design Mode to edit nodes, groups, and phases.',
+  note: "This is a FlowGraph chart file. Open it with the FlowGraph app to view and edit the interactive dependency flowchart.",
+  app: "https://gtran-07.github.io/TGRAPH/",
+  author: "Giang Tran",
+  usage:
+    "In the app: click the folder icon (or drag-and-drop this file) to load it. Use Design Mode to edit nodes, groups, and phases.",
 };
 
 /** One view's saved layout — positions for every node + the viewport transform. */
@@ -84,13 +95,17 @@ export function buildExportPayload(
   const hasPhases = phases && phases.length > 0;
   const hasTagRegistry = tagRegistry && tagRegistry.length > 0;
   const hasOwnerRegistry = ownerRegistry && ownerRegistry.length > 0;
-  const hasEngagement = discoveryEngagement && Object.keys(discoveryEngagement).length > 0;
-  const hasEdgePathTypes = edgePathTypes && Object.keys(edgePathTypes).length > 0;
+  const hasEngagement =
+    discoveryEngagement && Object.keys(discoveryEngagement).length > 0;
+  const hasEdgePathTypes =
+    edgePathTypes && Object.keys(edgePathTypes).length > 0;
 
   // Serialize phases: omit groupIds when empty to keep JSON clean for graphs without group membership
   const phasesData = phases?.map((p) => ({
     ...p,
-    ...(p.groupIds && p.groupIds.length > 0 ? { groupIds: p.groupIds } : { groupIds: undefined }),
+    ...(p.groupIds && p.groupIds.length > 0
+      ? { groupIds: p.groupIds }
+      : { groupIds: undefined }),
   }));
 
   const _meta: GraphMeta = { ...DEFAULT_META, ...meta };
@@ -105,7 +120,7 @@ export function buildExportPayload(
       ...(hasOwnerRegistry ? { ownerRegistry } : {}),
       ...(hasEdgePathTypes ? { edgePathTypes } : {}),
       _layout: {
-        currentView: currentView ?? 'dag',
+        currentView: currentView ?? "dag",
         dag: dagLayout ?? null,
         lanes: lanesLayout ?? null,
         ...(hasEngagement ? { discoveryEngagement } : {}),
@@ -129,7 +144,7 @@ export function exportGraphToJson(
   currentView?: string,
   dagLayout?: ViewLayout | null,
   lanesLayout?: ViewLayout | null,
-  filename = 'flowgraph.json',
+  filename = "flowgraph.json",
   groups?: GraphGroup[],
   phases?: GraphPhase[],
   tagRegistry?: NodeTag[],
@@ -138,15 +153,27 @@ export function exportGraphToJson(
   discoveryEngagement?: CinemaEngagementMap,
   edgePathTypes?: Record<string, PathType>,
 ): void {
-  const exportData = buildExportPayload(nodes, currentView, dagLayout, lanesLayout, groups, phases, tagRegistry, ownerRegistry, meta, discoveryEngagement, edgePathTypes);
+  const exportData = buildExportPayload(
+    nodes,
+    currentView,
+    dagLayout,
+    lanesLayout,
+    groups,
+    phases,
+    tagRegistry,
+    ownerRegistry,
+    meta,
+    discoveryEngagement,
+    edgePathTypes,
+  );
   const jsonString = JSON.stringify(exportData, null, 2);
 
   // Create a downloadable Blob from the JSON string
-  const blob = new Blob([jsonString], { type: 'application/json' });
+  const blob = new Blob([jsonString], { type: "application/json" });
   const blobUrl = URL.createObjectURL(blob);
 
   // Create a temporary anchor element, click it to trigger download, then clean up
-  const downloadLink = document.createElement('a');
+  const downloadLink = document.createElement("a");
   downloadLink.href = blobUrl;
   downloadLink.download = filename;
   downloadLink.click();
@@ -168,9 +195,9 @@ export function generateNodeId(existingNodes: GraphNode[]): string {
   const existingIds = new Set(existingNodes.map((node) => node.id));
   let counter = existingNodes.length + 1;
 
-  while (existingIds.has(`NODE-${String(counter).padStart(2, '0')}`)) {
+  while (existingIds.has(`NODE-${String(counter).padStart(2, "0")}`)) {
     counter++;
   }
 
-  return `NODE-${String(counter).padStart(2, '0')}`;
+  return `NODE-${String(counter).padStart(2, "0")}`;
 }
