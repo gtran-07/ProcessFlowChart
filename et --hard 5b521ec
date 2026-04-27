@@ -1,0 +1,37 @@
+[33m5b521ec[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mEnhanced-Visualization[m[33m, [m[1;31morigin/Enhanced-Visualization[m[33m)[m HEAD@{0}: checkout: moving from Enhanced-Visualization to Enhanced-Visualization
+[33m5b521ec[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mEnhanced-Visualization[m[33m, [m[1;31morigin/Enhanced-Visualization[m[33m)[m HEAD@{1}: commit: More polishing
+[33mabb1b33[m HEAD@{2}: commit: major feature push
+[33m5513e70[m HEAD@{3}: commit: Add more and more features
+[33m089e374[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{4}: checkout: moving from main to Enhanced-Visualization
+[33m089e374[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{5}: commit: Refine more animation
+[33ma52a883[m HEAD@{6}: commit: A lot fineses worked into the app on this one, solid app now
+[33med01360[m HEAD@{7}: commit: more refinement
+[33m75a1115[m HEAD@{8}: commit: Add in the core feature of discovery mode feature
+[33mde4b6fc[m HEAD@{9}: commit: Major Wrapped
+[33m8109819[m HEAD@{10}: commit: Build Standalone App
+[33m1aaf759[m HEAD@{11}: commit: Refine save feature and refresh instructions
+[33md6672a6[m HEAD@{12}: commit: Adding more extra and refines
+[33m129dabe[m HEAD@{13}: commit: Further Design mode convenient features
+[33m8267f1d[m HEAD@{14}: commit: Fixing node and group drag when there are collapsed phases
+[33m74a9145[m HEAD@{15}: commit: include sample flowchart
+[33ma244e62[m[33m ([m[1;31morigin/Proces-Phases-Feature[m[33m, [m[1;32mProces-Phases-Feature[m[33m)[m HEAD@{16}: merge proces-phases-feature: Fast-forward
+[33m3bed5d9[m HEAD@{17}: checkout: moving from Proces-Phases-Feature to main
+[33ma244e62[m[33m ([m[1;31morigin/Proces-Phases-Feature[m[33m, [m[1;32mProces-Phases-Feature[m[33m)[m HEAD@{18}: commit: Final feature improvements
+[33m4d08351[m HEAD@{19}: commit: more feature improvement and bug fixings
+[33m6f53cd7[m HEAD@{20}: commit: foundation is in
+[33m4486c15[m HEAD@{21}: commit: Major bug fixing to get LANE view phase design right
+[33m1be9234[m HEAD@{22}: commit: Adding Phases to the flow chart
+[33m23f1022[m[33m ([m[1;31morigin/Nested-Grouping-and-Phase[m[33m, [m[1;32mNested-Grouping-and-Phase[m[33m)[m HEAD@{23}: checkout: moving from Proces-Phases-Feature to Proces-Phases-Feature
+[33m23f1022[m[33m ([m[1;31morigin/Nested-Grouping-and-Phase[m[33m, [m[1;32mNested-Grouping-and-Phase[m[33m)[m HEAD@{24}: checkout: moving from Nested-Grouping-and-Phase to Proces-Phases-Feature
+[33m23f1022[m[33m ([m[1;31morigin/Nested-Grouping-and-Phase[m[33m, [m[1;32mNested-Grouping-and-Phase[m[33m)[m HEAD@{25}: commit: Fixing grouping bugs
+[33m3bed5d9[m HEAD@{26}: checkout: moving from Nested-Grouping-and-Phase to Nested-Grouping-and-Phase
+[33m3bed5d9[m HEAD@{27}: checkout: moving from main to Nested-Grouping-and-Phase
+[33m3bed5d9[m HEAD@{28}: commit: Fixing export grid and graphical details
+[33mc1918a8[m HEAD@{29}: commit: Update save as and export feature
+[33m1e21e40[m HEAD@{30}: commit: Update manual content, Top menu resonsive, last save timestamp
+[33m0a37797[m HEAD@{31}: commit: Add in ability to save changes directly to JSON file on local computer for capabable browser and export/download JSON if not. Add in author info
+[33m9d6157d[m HEAD@{32}: commit: add: View JSON file and more organic user-friendly option to create new chart or open existing JSON
+[33m012ce63[m HEAD@{33}: commit: fix: set base path for GitHub Pages (ProcessFlowChart repo)
+[33me3c2e63[m HEAD@{34}: commit: Update for github pages
+[33m674a7f5[m HEAD@{35}: Branch: renamed refs/heads/master to refs/heads/main
+[33m674a7f5[m HEAD@{37}: commit (initial): Initial commit
