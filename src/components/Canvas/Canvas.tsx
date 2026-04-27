@@ -133,6 +133,8 @@ export function Canvas() {
     autoLayoutPhase,
     autoLayoutFromPositions,
     clearAutoLayoutFromPositions,
+    tracePathSource,
+    clearTracePath,
   } = useGraphStore();
 
   // ── Auto-layout animation positions (declared early — referenced by suppression IIFE below) ──
@@ -920,6 +922,14 @@ export function Canvas() {
       return;
     }
 
+    if (designMode && designTool === "tracePath") {
+      if (!clickedNode && !clickedGroup) {
+        // Clicked empty space in trace mode — cancel any pending source selection
+        clearTracePath();
+      }
+      return;
+    }
+
     // Click on background or phase — deselect nodes/groups and clear multi-select.
     // Clicking a phase should still deselect nodes/groups; the phase click handler
     // selects the phase separately via onPhaseClick.
@@ -960,6 +970,8 @@ export function Canvas() {
         if (connectSourceId) {
           setConnectSource(null);
           setGhostTarget(null);
+        } else if (tracePathSource !== null) {
+          clearTracePath();
         } else if (focusedOwner) {
           exitOwnerFocus();
         } else if (focusMode) {
@@ -1318,7 +1330,9 @@ export function Canvas() {
       ? "cell"
       : designMode && designTool === "connect"
         ? "crosshair"
-        : marqueeMode
+        : designMode && designTool === "tracePath"
+          ? "crosshair"
+          : marqueeMode
           ? marquee
             ? "crosshair"
             : "crosshair"

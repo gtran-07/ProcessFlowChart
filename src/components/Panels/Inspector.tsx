@@ -876,6 +876,7 @@ export function InspectorContent() {
                         key={depId}
                         label={depNode ? depNode.name : depId}
                         type={pathType}
+                        ownerColor={depNode ? ownerColors[depNode.owner] : undefined}
                         onClick={() => navigateTo(depId)}
                       />
                     );
@@ -907,6 +908,7 @@ export function InspectorContent() {
                             key={depId}
                             label={depNode ? depNode.name : depId}
                             type={pathType}
+                            ownerColor={depNode ? ownerColors[depNode.owner] : undefined}
                             onClick={() => navigateTo(depId)}
                           />
                         );
@@ -1256,12 +1258,13 @@ const DEP_TYPE_COLOR: Record<PathType, string> = {
   critical: '#ef4444', priority: '#f59e0b', standard: 'var(--text3)', optional: 'var(--text3)',
 };
 
-function DepConnectionRow({ label, type, onClick }: { label: string; type: PathType; onClick: () => void }) {
+function DepConnectionRow({ label, type, ownerColor, onClick }: { label: string; type: PathType; ownerColor?: string; onClick: () => void }) {
+  const lineColor = ownerColor ?? 'var(--accent)';
   return (
     <button className={styles.depRow} onClick={onClick} title={`Go to: ${label}`}>
       <svg width={24} height={14} style={{ flexShrink: 0 }}>
         <line x1={2} y1={8} x2={22} y2={8}
-          stroke="var(--accent)" strokeWidth={Math.min(DEP_STROKE_W[type], 7)} strokeLinecap="round" />
+          stroke={lineColor} strokeWidth={Math.min(DEP_STROKE_W[type], 7)} strokeLinecap="round" />
         <line x1={3.5} y1={9.5} x2={23.5} y2={9.5}
           stroke={`rgba(255,255,255,${DEP_HL_OP[type]})`} strokeWidth={DEP_HL_W[type]} strokeLinecap="round" />
       </svg>

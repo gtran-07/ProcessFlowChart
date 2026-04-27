@@ -14,6 +14,7 @@ import React, { memo, useRef, useState } from 'react';
 import { useGraphStore } from '../../store/graphStore';
 import { NODE_W, NODE_H, LANE_LABEL_W, truncateText, clampXOutOfPhaseBands } from '../../utils/layout';
 import { GROUP_R } from '../../utils/grouping';
+import { findAllPaths } from '../../utils/pathTracing';
 import type { GraphNode, Position } from '../../types/graph';
 
 // Word-wraps a node title into at most 2 lines of ~20 chars each.
@@ -63,6 +64,7 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
     saveLayoutToCache, settleAndResolve, multiSelectIds, toggleMultiSelect,
     discoveryActive, discoveryPhase, discoveryRoleMap, discoveryVisited, heatTiers,
     selectedReconstructionChip, selectReconstructionChip, recordReconstructionAttempt,
+    allEdges, tracePathSource, setTracePathSource, setTracePathResults,
   } = useGraphStore();
 
   // Capture animate at mount time only — ignore later prop changes so that
@@ -87,20 +89,22 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
   const isJumped = lastJumpedNodeId === node.id;
   const isConnectSource = connectSourceId === node.id;
   const isMultiSelected = multiSelectIds.includes(node.id);
+  const isTraceSource = tracePathSource === node.id;
 
   let strokeColor = 'var(--border2)';
   let strokeWidth = 1.5;
-  if (isConnectSource)                      { strokeColor = '#a78bfa'; strokeWidth = 2.5; }
+  if (isTraceSource)                         { strokeColor = '#22d3ee'; strokeWidth = 2.5; }
+  else if (isConnectSource)                  { strokeColor = '#a78bfa'; strokeWidth = 2.5; }
   else if (isMultiSelected || (isSelected && designMode)) { strokeColor = '#ef4444'; strokeWidth = 2.5; }
-  else if (isSelected)                      { strokeColor = 'var(--accent)'; strokeWidth = 2; }
-  else if (isLocalHovered)                  { strokeColor = 'var(--accent)'; strokeWidth = 2; }
+  else if (isSelected)                       { strokeColor = 'var(--accent)'; strokeWidth = 2; }
+  else if (isLocalHovered)                   { strokeColor = 'var(--accent)'; strokeWidth = 2; }
 
   // ── Drag handling ─────────────────────────────────────────────────────
   function handleMouseDown(e: React.MouseEvent) {
     e.stopPropagation();
     // Spatial positions are memory anchors during reconstruction — block all dragging
     if (discoveryPhase === 'reconstruction') return;
-    if (designMode && designTool === 'connect') return;
+    if (designMode && (designTool === 'connect' || designTool === 'tracePath')) return;
 
     const svgPt = screenToSvg(e.clientX, e.clientY);
     wasDraggedRef.current = false;
@@ -349,6 +353,16 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
       } else if (connectSourceId !== node.id) {
         addEdge(connectSourceId, node.id);
         setConnectSource(null);
+      }
+      return;
+    }
+
+    if (designMode && designTool === 'tracePath') {
+      if (!tracePathSource) {
+        setTracePathSource(node.id);
+      } else if (tracePathSource !== node.id) {
+        const paths = findAllPaths(tracePathSource, node.id, allEdges);
+        setTracePathResults(paths);
       }
       return;
     }

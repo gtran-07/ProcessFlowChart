@@ -6,9 +6,6 @@
   position: relative;
   isolation: isolate; /* Contain compositing layers — prevents GPU artifacts from bleeding into header */
   background: var(--bg);
-  background-image:
-    radial-gradient(circle at 20% 50%, rgba(79,158,255,.03) 0%, transparent 50%),
-    radial-gradient(circle at 80% 20%, rgba(123,94,167,.03) 0%, transparent 50%);
 }
 
 /* Dot grid background — renders via CSS pseudo-element, no DOM element needed */

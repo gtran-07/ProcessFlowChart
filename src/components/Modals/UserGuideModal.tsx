@@ -365,6 +365,40 @@ const SECTIONS: GuideSection[] = [
     ),
   },
   {
+    id: 'owner-focus',
+    icon: '🎯',
+    title: 'Owner Focus Mode',
+    content: (
+      <div>
+        <p><strong>Owner Focus Mode</strong> spotlights one team's swim lane in <strong>LANES view</strong>, dimming everything else and coloring edges by their relationship to the focused owner. Use it to understand exactly what feeds into a team's work and what flows out of it.</p>
+
+        <h4 className={styles.subheading}>Entering Owner Focus Mode</h4>
+        <p>Switch to <strong>LANES view</strong> using the DAG / LANES toggle in the header, then <strong>click the lane label area</strong> on the left side of any swim lane band. The label area is clickable (the cursor changes to a pointer when you hover it).</p>
+
+        <h4 className={styles.subheading}>What changes on the canvas</h4>
+        <ul className={styles.ul}>
+          <li>The focused owner's nodes stay at full opacity.</li>
+          <li><strong>Blue edges</strong> (upstream) — arrows arriving at the focused lane from other owners.</li>
+          <li><strong>Amber edges</strong> (downstream) — arrows leaving the focused lane toward other owners.</li>
+          <li>Unrelated lanes and their edges are ghosted.</li>
+        </ul>
+
+        <h4 className={styles.subheading}>Status bar</h4>
+        <p>A bar appears above the Phase Navigator showing the focused owner's name, color dot, and counts: <em>N upstream ⬆</em> (nodes from other lanes that feed in) and <em>N downstream ⬇</em> (nodes in other lanes that depend on this lane). Hidden lanes are counted too.</p>
+
+        <h4 className={styles.subheading}>Exiting Owner Focus Mode</h4>
+        <ul className={styles.ul}>
+          <li>Press <code>Escape</code>.</li>
+          <li>Click the <strong>× Exit</strong> button in the status bar.</li>
+          <li>Click the same lane label again to toggle it off.</li>
+        </ul>
+
+        <Warning>Owner Focus Mode only works in LANES view — the lane labels are not visible in DAG view.</Warning>
+        <Tip>Owner Focus is great for handoff reviews: the blue upstream edges show exactly who passes work to this team, and the amber downstream edges show who is waiting on them.</Tip>
+      </div>
+    ),
+  },
+  {
     id: 'cinema',
     icon: '🎬',
     title: 'Process Cinema',
@@ -522,6 +556,7 @@ const SECTIONS: GuideSection[] = [
           <li><strong>Select</strong> — default; drag nodes, click to inspect. Shift+click to multi-select.</li>
           <li><strong>Add Node</strong> — click empty canvas to place a new node</li>
           <li><strong>Connect</strong> — draw a directed connection between two nodes</li>
+          <li><strong>⇢ Trace</strong> — find all paths between two nodes and assign a path type to every edge on a chosen path</li>
           <li><strong>Edit Node</strong> — open the edit dialog for the selected node (appears when a node is selected)</li>
           <li><strong>Edit Group</strong> — open the edit dialog for the selected group (appears when a group is selected)</li>
           <li><strong>⬡ Group (N)</strong> — create a group from N multi-selected items (appears when 2+ items are selected)</li>
@@ -604,6 +639,83 @@ const SECTIONS: GuideSection[] = [
         <Warning>Duplicate connections are silently ignored.</Warning>
         <Warning>Self-connections (a node pointing to itself) are blocked.</Warning>
         <Tip>The direction matters: click the PREREQUISITE first, then the DEPENDENT.</Tip>
+        <Tip>After clicking the source node, press <strong>S</strong> to open Summon Mode — a faster way to connect many nodes without panning. See the <em>Summon Mode</em> section for details.</Tip>
+      </div>
+    ),
+  },
+  {
+    id: 'design-trace',
+    icon: '⇢',
+    title: 'Design: Trace Path',
+    content: (
+      <div>
+        <p>The Trace Path tool finds every directed route between two nodes and lets you stamp a <strong>path type</strong> onto all edges of the chosen route in one action. Use it to mark critical paths, optional detours, or alternative sequences directly on the graph.</p>
+
+        <h4 className={styles.subheading}>Using Trace Path</h4>
+        <Step number={1}>Click <strong>⇢ Trace</strong> in the design toolbar. The cursor changes to a crosshair.</Step>
+        <Step number={2}><strong>Click the source node</strong> (where you want the path to start). Its border turns cyan to confirm the selection.</Step>
+        <Step number={3}><strong>Click the target node</strong> (where the path should end). FlowGraph searches all directed routes between the two nodes.</Step>
+        <Step number={4}>If paths are found, a summary appears in the toolbar: <em>N/M paths · K edges from [Source Name]</em>. The active path is highlighted on the canvas with a dashed cyan overlay.</Step>
+        <Step number={5}>If more than one path was found, use the <strong>‹</strong> and <strong>›</strong> buttons to cycle through them and inspect each route on the canvas.</Step>
+        <Step number={6}>Click a path type button to assign it to every edge on the current path: <strong>Critical</strong>, <strong>Required</strong>, <strong>Optional</strong>, or <strong>Alternative</strong>. The assignment is recorded as a single undo snapshot and the tool returns to Select mode.</Step>
+
+        <h4 className={styles.subheading}>Path types</h4>
+        <ul className={styles.ul}>
+          <li><strong>Critical</strong> — must-complete sequence; no slack. Rendered with a distinct style to stand out.</li>
+          <li><strong>Required</strong> — standard mandatory flow (the default for all edges).</li>
+          <li><strong>Optional</strong> — can be skipped under certain conditions.</li>
+          <li><strong>Alternative</strong> — an equivalent substitute route.</li>
+        </ul>
+        <p>Path types are visual metadata only — they do not affect layout or dependency calculations. They are saved in the JSON file and visible in the Inspector when an edge is selected.</p>
+
+        <h4 className={styles.subheading}>Canceling</h4>
+        <ul className={styles.ul}>
+          <li>Click the <strong>✕</strong> cancel button in the toolbar after paths are found.</li>
+          <li>Press <code>Escape</code> to clear the source selection at any point.</li>
+          <li>Click empty canvas to cancel the pending source selection.</li>
+          <li>Switch to another tool to exit Trace mode entirely.</li>
+        </ul>
+
+        <Tip>Trace Path searches up to 10 distinct routes. On dense graphs with many parallel paths, only the first 10 found are shown — cycle through them to find the one you want.</Tip>
+        <Warning>Trace only follows the directed edge direction (prerequisites → dependents). If no path exists between the two nodes in that direction, no paths are found.</Warning>
+      </div>
+    ),
+  },
+  {
+    id: 'design-summon',
+    icon: '⚡',
+    title: 'Design: Summon Mode',
+    content: (
+      <div>
+        <p><strong>Summon Mode</strong> is a fast connection tool that lets you connect a source node to many targets at once — without panning or clicking scattered nodes on the canvas. It opens a searchable dock listing every node in the graph.</p>
+
+        <h4 className={styles.subheading}>Activating Summon Mode</h4>
+        <ul className={styles.ul}>
+          <li><strong>Select a node</strong> in Design Mode, then press <strong>S</strong>.</li>
+          <li>While using the Connect tool and a source node is glowing, press <strong>S</strong>.</li>
+          <li>Select a node with no connections — in the Inspector panel click <strong>✨ Summon nodes to connect</strong>.</li>
+        </ul>
+        <p>Only works in Design Mode. Multi-select (2+ items) blocks Summon — select a single node first.</p>
+
+        <h4 className={styles.subheading}>Using the Summon dock</h4>
+        <p>The dock slides in from the right. It lists all nodes grouped by owner. A filter count shows how many are visible.</p>
+        <ul className={styles.ul}>
+          <li><strong>Type in the search box</strong> to filter nodes by name, ID, or owner.</li>
+          <li><strong>Click any node row</strong> to instantly connect it to the source — a ping animation fires on the canvas at the target node's position to confirm the connection.</li>
+          <li>Connected nodes show a checkmark in the dock row.</li>
+          <li>Each row also shows a badge: <strong>✦ likely</strong> (common connections), <strong>↑ upstream</strong>, or <strong>↓ downstream</strong> — based on the graph structure.</li>
+        </ul>
+
+        <h4 className={styles.subheading}>Show on Ring</h4>
+        <p>If the filtered list has fewer nodes than a threshold, a <strong>Show on ring ✨</strong> button appears. Click it to display the matching nodes as a visual orbit ring around the source node on the canvas, so you can click them spatially rather than from the list.</p>
+
+        <h4 className={styles.subheading}>Exiting Summon Mode</h4>
+        <ul className={styles.ul}>
+          <li>Click <strong>Done ✓</strong> in the dock.</li>
+          <li>Press <code>Escape</code>.</li>
+        </ul>
+
+        <Tip>Summon Mode is the fastest way to wire up a new node that has many dependencies — open the dock, type to filter, and click to connect without ever panning.</Tip>
       </div>
     ),
   },
@@ -613,28 +725,38 @@ const SECTIONS: GuideSection[] = [
     title: 'Design: Edit Node',
     content: (
       <div>
-        <p>The Edit Node dialog lets you update a node's name, owner, and description, or delete the node entirely.</p>
+        <p>The Edit Node dialog lets you update a node's name, owner, description, and tags, or delete the node entirely.</p>
 
-        <h4 className={styles.subheading}>Opening the Edit dialog</h4>
+        <h4 className={styles.subheading}>Opening the dialog</h4>
         <ul className={styles.ul}>
           <li><strong>Double-click any node</strong> while Design Mode is active</li>
-          <li>Select a node, then click <strong>Edit Node</strong> in the design toolbar</li>
-          <li>Select a node, then click <strong>Edit Node</strong> in the Inspector panel</li>
+          <li>Select a node → click <strong>Edit Node</strong> in the design toolbar</li>
+          <li>Select a node → click <strong>Edit Node</strong> in the Inspector panel</li>
         </ul>
 
-        <h4 className={styles.subheading}>What you can change</h4>
+        <h4 className={styles.subheading}>Fields</h4>
         <ul className={styles.ul}>
-          <li><strong>Name</strong> — the display label on the node card</li>
-          <li><strong>Owner / Lane</strong> — moves the node to a different team's lane. New owners get a color automatically.</li>
-          <li><strong>Description</strong> — the detail text shown in the Inspector</li>
-          <li><strong>Tags</strong> — attach colored label tags. Click the tag dropdown to pick from existing tags or type to create a new one. Tags are visible in the Inspector panel.</li>
+          <li><strong>Node ID</strong> — shown but locked after creation. Other nodes reference it in their dependency lists, so it cannot be changed.</li>
+          <li><strong>Name</strong> — required. The label displayed on the node card (≤60 characters).</li>
+          <li><strong>Owner / Lane</strong> — type to filter existing owners, or enter a new name to create one. A color dot next to each existing owner shows its lane color. A trash icon clears the field; the ▾ chevron opens the full owner list. New owners get a color assigned automatically and appear as a new swim lane in LANES view.</li>
+          <li><strong>Description</strong> — optional free text (1–3 sentences) shown in the Inspector panel.</li>
+          <li><strong>Tags</strong> — see below.</li>
         </ul>
 
-        <h4 className={styles.subheading}>What you cannot change</h4>
-        <p>The <strong>Node ID</strong> is locked after creation because other nodes reference it in their dependency lists.</p>
+        <h4 className={styles.subheading}>Working with Tags</h4>
+        <p>The Tags field has a searchable dropdown:</p>
+        <ul className={styles.ul}>
+          <li>Type to filter the existing tag list. Assigned tags show a <strong>✓ checkmark</strong> — click again to remove.</li>
+          <li>To create a new tag, type its name, pick a color from the five swatches (Red, Amber, Green, Violet, Blue), then click <em>+ Create new tag: "…"</em>.</li>
+          <li>To rename or recolor an existing tag <strong>globally</strong> (it updates on every node that uses it), hover a tag row and click the <strong>✎ pencil</strong> icon. Edit the name and color, then press <code>Enter</code> or click Apply.</li>
+          <li>To remove a tag from this node, click its <strong>✕</strong> chip above the dropdown, or click the checkmarked row in the dropdown.</li>
+        </ul>
 
         <h4 className={styles.subheading}>Deleting a node</h4>
-        <p>Click the red <strong>Delete Node</strong> button. Confirm when prompted. Deleting removes the node AND all edges connected to it, and removes it from any other node's dependency list.</p>
+        <p>Click the red <strong>Delete Node</strong> button at the bottom of the dialog. A confirmation prompt appears before anything is deleted. Deleting removes the node, all edges connected to it, and its ID from every other node's dependency list.</p>
+
+        <Tip>The name field is focused automatically when the dialog opens — start typing the new name immediately.</Tip>
+        <Tip>Tag edits made with the ✎ pencil apply globally: if "Blocked" is renamed to "On Hold", every node using that tag updates at once.</Tip>
       </div>
     ),
   },
@@ -705,6 +827,13 @@ const SECTIONS: GuideSection[] = [
           <li><strong>Shift+click</strong> any node or group to add it to the selection. Click again to remove it.</li>
           <li>The toolbar shows a count: e.g. <em>3 items selected</em>.</li>
           <li>Click empty canvas to clear the selection (or click <strong>✕ Clear</strong> in the toolbar).</li>
+        </ul>
+
+        <h4 className={styles.subheading}>Marquee (rubber-band) selection</h4>
+        <p>For selecting many nodes at once, enable <strong>Marquee Mode</strong> with the dashed-rectangle button in the header (it turns blue when active). Then drag on the canvas to draw a selection rectangle — all nodes and groups whose center falls inside the rectangle are added to the selection.</p>
+        <ul className={styles.ul}>
+          <li>Click the dashed-rectangle header button again to turn Marquee Mode off and return to normal drag-to-pan.</li>
+          <li>Marquee Mode is independent of the design toolbar — it works alongside the Select tool.</li>
         </ul>
 
         <h4 className={styles.subheading}>Moving multiple items</h4>
@@ -854,18 +983,20 @@ const SECTIONS: GuideSection[] = [
         <div className={styles.shortcutTable}>
           <Shortcut keys="⌘K / Ctrl+K" action="Focus the search bar" />
           <Shortcut keys="Shift+?" action="Open this User Guide" />
-          <Shortcut keys="Escape" action="Close search results / exit Focus Mode / cancel connect / close modal / clear multi-select" />
+          <Shortcut keys="Escape" action="Close Summon dock / exit Owner Focus / exit Focus Mode / cancel connect / cancel trace path / close modal / clear multi-select" />
+          <Shortcut keys="Space (hold)" action="Pan-anywhere — drag to pan regardless of active design tool" />
           <Shortcut keys="Ctrl+Z" action="Undo last change (Design Mode)" />
           <Shortcut keys="Ctrl+Y / Ctrl+Shift+Z" action="Redo (Design Mode)" />
           <Shortcut keys="Ctrl+C" action="Copy selected nodes (Design Mode)" />
           <Shortcut keys="Ctrl+V" action="Paste copied nodes with new IDs (Design Mode)" />
           <Shortcut keys="Delete" action="Delete selected node, group, or multi-selection (Design Mode)" />
           <Shortcut keys="Shift+Click" action="Add/remove item from multi-selection (Design Mode, Select tool)" />
+          <Shortcut keys="S" action="Open Summon Mode for the selected node — connect targets from a searchable list (Design Mode)" />
           <Shortcut keys="Double-click node" action="Enter Focus Mode (view) or open Edit Node dialog (Design Mode)" />
           <Shortcut keys="Double-click group" action="Open Edit Group dialog (Design Mode)" />
           <Shortcut keys="Double-click phase band" action="Collapse / expand phase (Design Mode)" />
           <Shortcut keys="Double-click background" action="Exit Focus Mode" />
-          <Shortcut keys="S" action="Summon Mode — connect nodes without panning ✨ (Design Mode)" />
+          <Shortcut keys="Lane label click" action="Enter Owner Focus Mode for that lane (LANES view)" />
         </div>
         <Tip>Most header buttons have tooltips — hover over them to see what they do.</Tip>
       </div>

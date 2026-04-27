@@ -677,6 +677,76 @@ export function computeLayout(
     if (!anySwap) break;
   }
 
+  // ── Step 5.9: Directional edge-fan X stagger ───────────────────────────
+  // When a source node fans out to 2+ children in the same column, split them
+  // into UP (above source) and DOWN (below source) subgroups and apply two
+  // mirrored staircases:
+  //
+  //   UP   staircase (top → bottom): topmost   = most-left  … closest = most-right
+  //   DOWN staircase (top → bottom): closest   = most-right … bottommost = most-left
+  //
+  // Both staircases have "farthest-from-source at the left" so the edges that
+  // must travel the greatest vertical distance peel away earliest, preventing
+  // crossings within each direction group. Conflicting requests from multiple
+  // parents are averaged.
+  {
+    const STAGGER_X = 44;
+    const xStaggerAccum = new Map<string, number[]>();
+
+    nodeIds.forEach((srcId) => {
+      const srcCY = positions[srcId] ? positions[srcId].y + NODE_H / 2 : 0;
+      const children = (outAdjacency[srcId] ?? []).filter((c) => nodeIdSet.has(c) && positions[c]);
+
+      const byColumn = new Map<number, string[]>();
+      children.forEach((cid) => {
+        const col = layer[cid] ?? 0;
+        if (!byColumn.has(col)) byColumn.set(col, []);
+        byColumn.get(col)!.push(cid);
+      });
+
+      byColumn.forEach((group) => {
+        if (group.length < 2) return;
+
+        // UP group: destinations above source center, sorted top-to-bottom
+        const upGroup = group
+          .filter((id) => positions[id].y + NODE_H / 2 < srcCY)
+          .sort((a, b) => positions[a].y - positions[b].y);
+
+        // DOWN group: destinations at or below source center, sorted top-to-bottom
+        const downGroup = group
+          .filter((id) => positions[id].y + NODE_H / 2 >= srcCY)
+          .sort((a, b) => positions[a].y - positions[b].y);
+
+        // UP staircase: i=0 (topmost/farthest) → most negative (left)
+        //               i=n-1 (closest up)      → most positive (right)
+        const n_up = upGroup.length;
+        if (n_up >= 2) {
+          upGroup.forEach((nid, i) => {
+            const stagger = (i - (n_up - 1) / 2) * STAGGER_X;
+            if (!xStaggerAccum.has(nid)) xStaggerAccum.set(nid, []);
+            xStaggerAccum.get(nid)!.push(stagger);
+          });
+        }
+
+        // DOWN staircase (reversed): i=0 (closest down)     → most positive (right)
+        //                            i=n-1 (bottommost/far) → most negative (left)
+        const n_down = downGroup.length;
+        if (n_down >= 2) {
+          downGroup.forEach((nid, i) => {
+            const stagger = ((n_down - 1 - i) - (n_down - 1) / 2) * STAGGER_X;
+            if (!xStaggerAccum.has(nid)) xStaggerAccum.set(nid, []);
+            xStaggerAccum.get(nid)!.push(stagger);
+          });
+        }
+      });
+    });
+
+    xStaggerAccum.forEach((offsets, nid) => {
+      const avg = offsets.reduce((a, b) => a + b, 0) / offsets.length;
+      positions[nid] = { ...positions[nid], x: positions[nid].x + avg };
+    });
+  }
+
   // ── Step 6: Resolve overlaps ─────────────────────────────────────────────
   // Gravity centering + bidirectional refinement can still leave nodes overlapping
   // on dense layers. One pass of separation guarantees zero overlap with clean padding.
@@ -1156,6 +1226,74 @@ export function computeLaneLayout(
     };
   });
 
+  // ── Step 7: Directional edge-fan X stagger (lane view) ──────────────────
+  // Same staircase logic as DAG step 5.9, applied after lane positions are
+  // fixed. In lane view, long cross-lane edges make the bundling especially
+  // visible, so this is the primary untangling mechanism here.
+  //
+  //   UP   staircase: topmost dest (farthest above source) = leftmost X
+  //   DOWN staircase: bottommost dest (farthest below source) = leftmost X
+  //
+  // Each direction group is staggered independently; multiple-parent conflicts
+  // are resolved by averaging.
+  {
+    const LANE_STAGGER_X = 44;
+    const xStaggerAccum = new Map<string, number[]>();
+
+    nodes.forEach((src) => {
+      if (!presentOwnerSet.has(src.owner)) return;
+      const srcPos = positions[src.id];
+      if (!srcPos) return;
+      const srcCY = srcPos.y + NODE_H / 2;
+
+      const children = (outAdj.get(src.id) ?? []).filter((c) => positions[c] !== undefined);
+
+      const byX = new Map<number, string[]>();
+      children.forEach((cid) => {
+        const col = positions[cid].x;
+        if (!byX.has(col)) byX.set(col, []);
+        byX.get(col)!.push(cid);
+      });
+
+      byX.forEach((group) => {
+        if (group.length < 2) return;
+
+        const upGroup = group
+          .filter((id) => positions[id].y + NODE_H / 2 < srcCY)
+          .sort((a, b) => positions[a].y - positions[b].y);
+
+        const downGroup = group
+          .filter((id) => positions[id].y + NODE_H / 2 >= srcCY)
+          .sort((a, b) => positions[a].y - positions[b].y);
+
+        // UP staircase: topmost (farthest) = most-left, closest = most-right
+        const n_up = upGroup.length;
+        if (n_up >= 2) {
+          upGroup.forEach((nid, i) => {
+            const stagger = (i - (n_up - 1) / 2) * LANE_STAGGER_X;
+            if (!xStaggerAccum.has(nid)) xStaggerAccum.set(nid, []);
+            xStaggerAccum.get(nid)!.push(stagger);
+          });
+        }
+
+        // DOWN staircase (reversed): closest = most-right, bottommost (farthest) = most-left
+        const n_down = downGroup.length;
+        if (n_down >= 2) {
+          downGroup.forEach((nid, i) => {
+            const stagger = ((n_down - 1 - i) - (n_down - 1) / 2) * LANE_STAGGER_X;
+            if (!xStaggerAccum.has(nid)) xStaggerAccum.set(nid, []);
+            xStaggerAccum.get(nid)!.push(stagger);
+          });
+        }
+      });
+    });
+
+    xStaggerAccum.forEach((offsets, nid) => {
+      const avg = offsets.reduce((a, b) => a + b, 0) / offsets.length;
+      positions[nid] = { ...positions[nid], x: positions[nid].x + avg };
+    });
+  }
+
   return { positions, laneMetrics };
 }
 
@@ -1175,14 +1313,14 @@ export function computeLaneLayout(
  * @param to   - Position of the target node (top-left corner)
  * @returns    - An SVG path data string, e.g. "M 180 36 C 243 36, 257 36, 320 36"
  */
-export function computeEdgePath(from: Position, to: Position): string {
-  // Start point: right-center of the source node
+export function computeEdgePath(from: Position, to: Position, startDy = 0, endDy = 0): string {
+  // Start point: right-center of the source node, offset by port-spread amount.
   const startX = from.x + NODE_W;
-  const startY = from.y + NODE_H / 2;
+  const startY = from.y + NODE_H / 2 + startDy;
 
-  // End point: slightly before the left-center of the target node.
+  // End point: slightly before the left-center of the target node, offset by port-spread amount.
   const endX = to.x - 10;
-  const endY = to.y + NODE_H / 2;
+  const endY = to.y + NODE_H / 2 + endDy;
 
   const dx = endX - startX;
   const dy = endY - startY;
@@ -1193,36 +1331,58 @@ export function computeEdgePath(from: Position, to: Position): string {
 
   if (absDy > absDx * 1.2 && dx > 0) {
     // Steep cross-lane edge: Sankey-style S-curve.
-    // Both control points share the horizontal midpoint so the curve departs
-    // horizontally from the source and arrives horizontally at the target,
-    // producing a clean S-shape instead of a near-vertical line.
+    // When port-spread is active, pull each control point toward its respective
+    // port (source or target) so the edge holds its spread Y for a longer
+    // horizontal stretch before the S-bend — prevents edges from visually
+    // converging immediately after leaving the port.
     const midX = (startX + endX) / 2;
-    controlX1 = midX;
-    controlX2 = midX;
+    const startHold = Math.min(Math.abs(startDy) / 30, 1);
+    const endHold   = Math.min(Math.abs(endDy)   / 30, 1);
+    controlX1 = startX + (midX - startX) * (1 - startHold * 0.45);
+    controlX2 = endX   - (endX - midX)   * (1 - endHold   * 0.45);
     controlY1 = startY;
     controlY2 = endY;
   } else if (dx <= 0) {
-    // Back-edge (target is left of source, same column or reversed):
-    // bow both control points out to the right so the curve arcs around.
+    // Back-edge: bow both control points out to the right so the curve arcs around.
     const hSpread = Math.max(absDy * 0.35, absDx * 0.5, 80);
     controlX1 = startX + hSpread;
     controlX2 = endX + hSpread;
     controlY1 = startY;
     controlY2 = endY;
   } else {
-    // Mostly horizontal edge: original offset formula.
-    // Horizontal reach: use the larger of 50% of dx or 50% of the vertical distance,
-    // so shallow-steep edges arc wide enough to avoid an S-curve inflection.
-    // Cap at 47% of dx so control points never cross past each other.
+    // Mostly horizontal edge.
     const cpOffset = Math.min(
       Math.max(dx * 0.5, absDy * 0.5),
       Math.max(dx * 0.47, 40),
     );
     controlX1 = startX + cpOffset;
     controlX2 = endX - cpOffset;
-    // Blend control Y 15% toward destination for a smooth forward arc.
-    controlY1 = startY + dy * 0.15;
-    controlY2 = endY - dy * 0.15;
+
+    // When port-spread is active, flatten the control point Y so the bezier exits
+    // the port horizontally before bending toward the target. This keeps spread
+    // edges visually separated for a meaningful distance instead of immediately
+    // converging at the first control point.
+    // Scale: no spread → bias 0.15 (original); spread ≥ 30px → bias 0.02 (nearly flat).
+    const startSpreadRatio = Math.min(Math.abs(startDy) / 30, 1);
+    const endSpreadRatio   = Math.min(Math.abs(endDy)   / 30, 1);
+    const startBias = 0.15 - startSpreadRatio * 0.13;
+    const endBias   = 0.15 - endSpreadRatio   * 0.13;
+    controlY1 = startY + dy * startBias;
+    controlY2 = endY   - dy * endBias;
+
+    // Skip-edge bowing: when an edge spans more than one column at roughly the same
+    // row (|nodeDy| < half a node height), arc the control points upward so the edge
+    // visually clears intermediate nodes instead of cutting straight through them.
+    // Uses the node's natural center-Y (ignoring port-spread offsets) to detect same-row
+    // alignment, so the bow is driven by layout position, not by rendering artifacts.
+    const COLUMN_STEP = NODE_W + GAP_X;
+    const nodeDy = (to.y + NODE_H / 2) - (from.y + NODE_H / 2);
+    const columnsCrossed = dx / COLUMN_STEP;
+    if (Math.abs(nodeDy) < NODE_H * 0.5 && columnsCrossed > 1.1) {
+      const bow = Math.max(-(columnsCrossed - 1) * NODE_H * 0.4, -NODE_H * 1.5);
+      controlY1 += bow;
+      controlY2 += bow;
+    }
   }
 
   return `M ${startX} ${startY} C ${controlX1} ${controlY1}, ${controlX2} ${controlY2}, ${endX} ${endY}`;

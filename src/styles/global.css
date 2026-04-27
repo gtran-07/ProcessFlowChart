@@ -18,33 +18,33 @@
 /* ─── CSS CUSTOM PROPERTIES (DESIGN TOKENS) ────────────────────────────────── */
 :root {
   /* Background layers — darkest to lightest */
-  --bg: #161c27;        /* Canvas background — the darkest surface */
-  --bg2: #1b2233;       /* Header and sidebar background */
-  --bg3: #212840;       /* Input backgrounds, code blocks */
-  --surface: #252e42;   /* Node backgrounds, modal surfaces */
-  --surface2: #2d3852;  /* Hover states, active surfaces */
+  --bg: #161c27; /* Canvas background — the darkest surface */
+  --bg2: #1b2233; /* Header and sidebar background */
+  --bg3: #212840; /* Input backgrounds, code blocks */
+  --surface: #252e42; /* Node backgrounds, modal surfaces */
+  --surface2: #2d3852; /* Hover states, active surfaces */
 
   /* Border colors */
-  --border: #252d3e;    /* Subtle dividers, inactive borders */
-  --border2: #2e3850;   /* More visible borders, node strokes */
+  --border: #252d3e; /* Subtle dividers, inactive borders */
+  --border2: #2e3850; /* More visible borders, node strokes */
 
   /* Accent colors */
-  --accent: #4f9eff;    /* Primary blue — selected states, highlighted edges */
-  --accent2: #7b5ea7;   /* Purple — layouts button, secondary actions */
-  --accent3: #2dd4bf;   /* Teal — save button, success states */
+  --accent: #4f9eff; /* Primary blue — selected states, highlighted edges */
+  --accent2: #7b5ea7; /* Purple — layouts button, secondary actions */
+  --accent3: #2dd4bf; /* Teal — save button, success states */
   --highlight: #f59e0b; /* Amber — search results, focus mode banner */
 
   /* Text colors */
-  --text: #e2e8f0;      /* Primary text — node names, body copy */
-  --text2: #94a3b8;     /* Secondary text — descriptions, subtitles */
-  --text3: #64748b;     /* Tertiary text — labels, placeholders, disabled */
+  --text: #e2e8f0; /* Primary text — node names, body copy */
+  --text2: #94a3b8; /* Secondary text — descriptions, subtitles */
+  --text3: #64748b; /* Tertiary text — labels, placeholders, disabled */
 
   /* Design mode accent */
-  --design: #a78bfa;    /* Purple — design mode banner, connect tool, edit states */
+  --design: #a78bfa; /* Purple — design mode banner, connect tool, edit states */
 
   /* Typography */
-  --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-  --font-display: 'Syne', 'Inter', system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+  --font-display: "Syne", "Inter", system-ui, sans-serif;
 
   /* Node dimensions (also defined in layout.ts — keep in sync) */
   --node-w: 180px;
@@ -53,14 +53,18 @@
 }
 
 /* ─── CSS RESET ─────────────────────────────────────────────────────────────── */
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
 /* ─── BASE STYLES ───────────────────────────────────────────────────────────── */
-html, body, #root {
+html,
+body,
+#root {
   height: 100%;
   overflow: hidden; /* The canvas handles its own scroll/pan */
 }
@@ -116,9 +120,18 @@ body {
  * GPU compositing artifact that SVG filters produce on large graphs.
  */
 @keyframes jumpGlowPulse {
-  0%   { stroke: rgba(245, 158, 11, 0.40); stroke-width: 1.5; }
-  50%  { stroke: rgba(245, 158, 11, 0.90); stroke-width: 2.5; }
-  100% { stroke: rgba(245, 158, 11, 0.40); stroke-width: 1.5; }
+  0% {
+    stroke: rgba(245, 158, 11, 0.4);
+    stroke-width: 1.5;
+  }
+  50% {
+    stroke: rgba(245, 158, 11, 0.9);
+    stroke-width: 2.5;
+  }
+  100% {
+    stroke: rgba(245, 158, 11, 0.4);
+    stroke-width: 1.5;
+  }
 }
 
 /** Applied to the node <g> element while lastJumpedNodeId matches this node. */
@@ -132,9 +145,15 @@ body {
  * with the parent .node-group opacity used by the hover-dim system.
  */
 @keyframes selectedGlowPulse {
-  0%   { stroke-opacity: 0.45; }
-  50%  { stroke-opacity: 1; }
-  100% { stroke-opacity: 0.45; }
+  0% {
+    stroke-opacity: 0.45;
+  }
+  50% {
+    stroke-opacity: 1;
+  }
+  100% {
+    stroke-opacity: 0.45;
+  }
 }
 
 .node-selected-glow,
@@ -181,27 +200,63 @@ body {
  * node-group-disappearing: child nodes scale down toward the group center.
  */
 @keyframes groupExplode {
-  0%   { opacity: 1; transform: scale(1); }
-  40%  { opacity: 1; transform: scale(1.25); }
-  100% { opacity: 0; transform: scale(0.15); }
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1.25);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.15);
+  }
 }
 
 @keyframes groupImplode {
-  0%   { opacity: 1; transform: scale(1); }
-  30%  { opacity: 1; transform: scale(1.15); }
-  100% { opacity: 0; transform: scale(0.1); }
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.1);
+  }
 }
 
 @keyframes nodeAppear {
-  0%   { opacity: 0; transform: scale(0.1); }
-  60%  { opacity: 1; transform: scale(1.08); }
-  100% { opacity: 1; transform: scale(1); }
+  0% {
+    opacity: 0;
+    transform: scale(0.1);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 @keyframes nodeDisappear {
-  0%   { opacity: 1; transform: scale(1); }
-  40%  { opacity: 1; transform: scale(1.05); }
-  100% { opacity: 0; transform: scale(0.1); }
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.1);
+  }
 }
 
 /* Applied to the collapsed-group <g> while expanding */
@@ -245,18 +300,34 @@ body {
  * fadeIn — simple opacity fade for tooltips and banners.
  */
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes phaseCardIn {
-  from { opacity: 0; transform: translateY(6px) scale(0.97); }
-  to   { opacity: 1; transform: translateY(0)   scale(1); }
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 @keyframes phaseCardOut {
-  from { opacity: 1; transform: translateY(0)   scale(1); }
-  to   { opacity: 0; transform: translateY(4px) scale(0.97); }
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(4px) scale(0.97);
+  }
 }
 
 /**
@@ -279,21 +350,33 @@ body {
 
 @media (prefers-reduced-motion: no-preference) {
   @keyframes nodeEnterFromLeft {
-    from { opacity: 0; }
-    to   { opacity: 1; }
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 
   /* Expanded group bounding boxes: opacity only — no translate (boxes can span many columns) */
   @keyframes groupEntranceExpand {
-    from { opacity: 0; }
-    to   { opacity: 1; }
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 
   /* Edge draw-on: stroke-dashoffset from full path length to 0.
      --path-length is set per element by EdgeLayer.useLayoutEffect. */
   @keyframes edgeDrawOn {
-    from { stroke-dashoffset: var(--path-length); }
-    to   { stroke-dashoffset: 0; }
+    from {
+      stroke-dashoffset: var(--path-length);
+    }
+    to {
+      stroke-dashoffset: 0;
+    }
   }
 
   .node-entrance {
@@ -322,26 +405,63 @@ body {
   transition: none !important;
 }
 
-
-/* Laser sweep on highlighted edges. A short beam (80px) travels along the full
-   connector with a 900px gap — large enough that only one beam is visible at a
-   time on any connector in the graph. Duration 1.5s gives a fast-but-readable
-   laser shot speed (~650px/s). */
+/* Laser sweep on highlighted edges.
+   The animation moves the dash pattern 980 user-space units per cycle.
+   Pattern period (beam + gap) controls how many beams are visible simultaneously.
+   Four PathType tiers escalate energy level: optional → standard → priority → critical. */
 @keyframes laserSweep {
-  from { stroke-dashoffset: 0; }
-  to   { stroke-dashoffset: -980; }
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -980;
+  }
 }
 
+/* Shared base — tier classes override dasharray, duration, and filter. */
 .edge-laser {
-  stroke-dasharray: 80 900;
   stroke-linecap: round;
-  animation: laserSweep 1.5s linear infinite;
-  filter: drop-shadow(0 0 3px currentColor) drop-shadow(0 0 8px currentColor);
   pointer-events: none;
 }
 
+/* optional: one slow beam */
+.edge-laser--optional {
+  stroke-dasharray: 40 940;
+  animation: laserSweep 4.5s linear infinite;
+  filter: drop-shadow(0 0 2px currentColor);
+}
+
+/* standard: one beam */
+.edge-laser--standard {
+  stroke-dasharray: 80 900;
+  animation: laserSweep 3s linear infinite;
+  filter: drop-shadow(0 0 3px currentColor) drop-shadow(0 0 8px currentColor);
+}
+
+/* priority: two beams simultaneously */
+.edge-laser--priority {
+  stroke-dasharray: 55 435;
+  animation: laserSweep 2.5s linear infinite;
+  filter: drop-shadow(0 0 4px currentColor) drop-shadow(0 0 12px currentColor);
+}
+
+/* critical: rapid electrical pulses — a second phase-offset arc path is rendered in EdgeLayer for the crackling effect. */
+.edge-laser--critical {
+  stroke-dasharray: 18 178;
+  animation: laserSweep 2s linear infinite;
+  filter: drop-shadow(0 0 5px currentColor) drop-shadow(0 0 16px currentColor)
+    drop-shadow(0 0 28px currentColor);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .edge-laser { animation: none; stroke-dasharray: none; }
+  .edge-laser,
+  .edge-laser--optional,
+  .edge-laser--standard,
+  .edge-laser--priority,
+  .edge-laser--critical {
+    animation: none;
+    stroke-dasharray: none;
+  }
 }
 
 /* ─── NODE / GROUP MOVEMENT ANIMATION ───────────────────────────────────────
@@ -372,35 +492,69 @@ body {
  * switches (those use graphFadeIn on #graph-content instead).
  */
 @keyframes nodeFadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 @keyframes nodeFadeOut {
-  from { opacity: 1; }
-  to   { opacity: 0; }
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
 }
-.node-fading-in  { animation: nodeFadeIn  280ms ease-out; }
-.node-fading-out { animation: nodeFadeOut 300ms ease-out forwards; pointer-events: none; }
+.node-fading-in {
+  animation: nodeFadeIn 280ms ease-out;
+}
+.node-fading-out {
+  animation: nodeFadeOut 300ms ease-out forwards;
+  pointer-events: none;
+}
 
 /* ─── EMPTY-STATE ANIMATIONS ─────────────────────────────────────────────────
  * Defined here (global scope) so Canvas.module.css can reference them by name
  * without CSS Modules hashing breaking the keyframe → animation-name link.
  * ─────────────────────────────────────────────────────────────────────────── */
 @keyframes emptyFadeUp {
-  from { opacity: 0; transform: translateY(14px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 @keyframes emptyIconFloat {
-  0%, 100% { transform: translateY(0);    }
-  50%       { transform: translateY(-6px); }
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
 }
 @keyframes emptyIconGlow {
-  0%, 100% { box-shadow: 0 0 0   0   rgba(79,158,255,0);    }
-  50%       { box-shadow: 0 0 18px 4px rgba(79,158,255,.22); }
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(79, 158, 255, 0);
+  }
+  50% {
+    box-shadow: 0 0 18px 4px rgba(79, 158, 255, 0.22);
+  }
 }
 @keyframes emptyFootnotePulse {
-  0%, 100% { opacity: .55; }
-  50%       { opacity: 1;   }
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 /* ─── PRINT / PDF EXPORT ──────────────────────────────────────────────────────
@@ -409,7 +563,10 @@ body {
  * This @media print block handles only the SVG sizing and color accuracy.
  * ─────────────────────────────────────────────────────────────────────────── */
 @media print {
-  @page { size: landscape; margin: 0; }
+  @page {
+    size: landscape;
+    margin: 0;
+  }
 
   /* Force the SVG to fill the entire print page */
   #canvas-wrap > svg {
@@ -425,7 +582,9 @@ body {
   }
 
   /* Hide the ::before dot-grid pseudo-element on the canvas during print */
-  #canvas-wrap::before { display: none !important; }
+  #canvas-wrap::before {
+    display: none !important;
+  }
 
   /* Hide overlays: minimap, zoom buttons, banners, design toolbar, tooltips */
   #canvas-wrap > *:not(svg) {
@@ -435,14 +594,14 @@ body {
 
 /* ─── CINEMA / DISCOVERY CUSTOM PROPERTIES ──────────────────────────────────── */
 :root {
-  --cinema-focus-color: #4f9eff;        /* Vivid blue — spotlit node border */
-  --cinema-visited-color: #22c55e;      /* Soft green — nodes the user has seen */
-  --cinema-danger-color: #ef4444;       /* Red — bottleneck pulse */
-  --cinema-ghost-opacity: 0.08;         /* Barely visible — unrelated nodes */
-  --cinema-lit-opacity: 0.45;           /* Subordinate but present */
-  --cinema-visited-opacity: 0.55;       /* Memory trace */
-  --cinema-focus-opacity: 1;            /* Fully vivid */
-  --cinema-transition: 400ms ease;      /* Shared transition timing */
+  --cinema-focus-color: #4f9eff; /* Vivid blue — spotlit node border */
+  --cinema-visited-color: #22c55e; /* Soft green — nodes the user has seen */
+  --cinema-danger-color: #ef4444; /* Red — bottleneck pulse */
+  --cinema-ghost-opacity: 0.08; /* Barely visible — unrelated nodes */
+  --cinema-lit-opacity: 0.45; /* Subordinate but present */
+  --cinema-visited-opacity: 0.55; /* Memory trace */
+  --cinema-focus-opacity: 1; /* Fully vivid */
+  --cinema-transition: 400ms ease; /* Shared transition timing */
 }
 
 /* ─── CANVAS NODE STATES DURING CINEMA ──────────────────────────────────────── */
@@ -453,7 +612,9 @@ body {
 .discovery-ghost,
 .discovery-visited,
 .discovery-danger {
-  transition: opacity var(--cinema-transition), filter var(--cinema-transition);
+  transition:
+    opacity var(--cinema-transition),
+    filter var(--cinema-transition);
 }
 
 /* Spotlit node — vivid, glowing blue border, full opacity */
@@ -495,8 +656,13 @@ body {
   animation: cinema-danger-pulse 1.2s ease-in-out infinite;
 }
 @keyframes cinema-danger-pulse {
-  0%, 100% { filter: drop-shadow(0 0 4px var(--cinema-danger-color)); }
-  50%       { filter: drop-shadow(0 0 12px var(--cinema-danger-color)); }
+  0%,
+  100% {
+    filter: drop-shadow(0 0 4px var(--cinema-danger-color));
+  }
+  50% {
+    filter: drop-shadow(0 0 12px var(--cinema-danger-color));
+  }
 }
 
 /* Suppress cinema overlay during print */
@@ -512,11 +678,11 @@ body {
  * heatmap-missed is additive — applied alongside cold or ice, never alone.
  */
 :root {
-  --heatmap-hot-color:    #f97316;   /* vivid orange-red — deeply engaged */
-  --heatmap-warm-color:   #f59e0b;   /* amber — moderate engagement */
-  --heatmap-cold-color:   #60a5fa;   /* sky blue — low engagement */
-  --heatmap-ice-color:    #93c5fd;   /* pale blue — barely seen */
-  --heatmap-missed-color: #fbbf24;   /* muted amber — cold node missed in reconstruction */
+  --heatmap-hot-color: #f97316; /* vivid orange-red — deeply engaged */
+  --heatmap-warm-color: #f59e0b; /* amber — moderate engagement */
+  --heatmap-cold-color: #60a5fa; /* sky blue — low engagement */
+  --heatmap-ice-color: #93c5fd; /* pale blue — barely seen */
+  --heatmap-missed-color: #fbbf24; /* muted amber — cold node missed in reconstruction */
 }
 
 /* Smooth fade when entering/leaving heatmap state */
@@ -529,8 +695,13 @@ body {
 
 /* Hot — vivid orange-red, slowly pulsing glow. Full presence. */
 @keyframes heatmap-hot-pulse {
-  0%, 100% { filter: drop-shadow(0 0 5px var(--heatmap-hot-color)); }
-  50%       { filter: drop-shadow(0 0 13px var(--heatmap-hot-color)); }
+  0%,
+  100% {
+    filter: drop-shadow(0 0 5px var(--heatmap-hot-color));
+  }
+  50% {
+    filter: drop-shadow(0 0 13px var(--heatmap-hot-color));
+  }
 }
 
 .heatmap-hot .node-main-rect,
@@ -586,8 +757,13 @@ body {
  * are present on the same element. Opacity is intentionally not set here —
  * the tier's own opacity (0.55 or 0.28) remains in effect. */
 @keyframes heatmap-missed-pulse {
-  0%, 100% { stroke-opacity: 0.35; }
-  50%       { stroke-opacity: 0.72; }
+  0%,
+  100% {
+    stroke-opacity: 0.35;
+  }
+  50% {
+    stroke-opacity: 0.72;
+  }
 }
 
 .heatmap-missed .node-main-rect,
@@ -604,7 +780,9 @@ body {
 .path-ancestor,
 .path-descendant,
 .path-ghost {
-  transition: opacity 0.2s ease, filter 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    filter 0.2s ease;
 }
 
 /* Target node — cyan glow, fully opaque */
@@ -645,10 +823,10 @@ body {
 
 /* ─── RECONSTRUCTION PHASE ────────────────────────────────────────────────── */
 :root {
-  --reconstruction-blank-border: #6b7280;    /* muted slate — empty slot outline */
+  --reconstruction-blank-border: #6b7280; /* muted slate — empty slot outline */
   --reconstruction-blank-fill-opacity: 0.25; /* ghost fill so slot shape is visible */
-  --reconstruction-correct-color: #22c55e;   /* green — successful placement */
-  --reconstruction-wrong-color: #ef4444;     /* red — incorrect attempt flash */
+  --reconstruction-correct-color: #22c55e; /* green — successful placement */
+  --reconstruction-wrong-color: #ef4444; /* red — incorrect attempt flash */
 }
 
 /* Blank slot — shape visible, all label text hidden */
@@ -671,9 +849,18 @@ body {
 
 /* Correct placement — green drop-shadow pop, spring curve */
 @keyframes reconstruction-correct-pop {
-  0%   { stroke-width: 1.5; filter: drop-shadow(0 0 0px  var(--reconstruction-correct-color)); }
-  45%  { stroke-width: 4;   filter: drop-shadow(0 0 12px var(--reconstruction-correct-color)); }
-  100% { stroke-width: 2;   filter: drop-shadow(0 0 4px  var(--reconstruction-correct-color)); }
+  0% {
+    stroke-width: 1.5;
+    filter: drop-shadow(0 0 0px var(--reconstruction-correct-color));
+  }
+  45% {
+    stroke-width: 4;
+    filter: drop-shadow(0 0 12px var(--reconstruction-correct-color));
+  }
+  100% {
+    stroke-width: 2;
+    filter: drop-shadow(0 0 4px var(--reconstruction-correct-color));
+  }
 }
 
 .reconstruction-correct .node-main-rect {
@@ -681,7 +868,8 @@ body {
   stroke-width: 2 !important;
   stroke-dasharray: none;
   fill-opacity: 1;
-  animation: reconstruction-correct-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  animation: reconstruction-correct-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)
+    forwards;
 }
 
 .reconstruction-correct {
@@ -691,12 +879,24 @@ body {
 
 /* Wrong placement — horizontal shake on the rect, returns to blank border color */
 @keyframes reconstruction-wrong-shake {
-  0%   { transform: translateX(0); }
-  20%  { transform: translateX(-5px); }
-  45%  { transform: translateX(5px); }
-  65%  { transform: translateX(-3px); }
-  82%  { transform: translateX(2px); }
-  100% { transform: translateX(0); }
+  0% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-5px);
+  }
+  45% {
+    transform: translateX(5px);
+  }
+  65% {
+    transform: translateX(-3px);
+  }
+  82% {
+    transform: translateX(2px);
+  }
+  100% {
+    transform: translateX(0);
+  }
 }
 
 .reconstruction-wrong .node-main-rect {
@@ -717,20 +917,41 @@ body {
 }
 
 @keyframes summon-ping {
-  0%   { r: 10; opacity: 0.8; }
-  100% { r: 60; opacity: 0; }
+  0% {
+    r: 10;
+    opacity: 0.8;
+  }
+  100% {
+    r: 60;
+    opacity: 0;
+  }
 }
 
 @keyframes summon-check-bounce {
-  0%   { transform: scale(0); }
-  60%  { transform: scale(1.2); }
-  100% { transform: scale(1); }
+  0% {
+    transform: scale(0);
+  }
+  60% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
 @keyframes summon-source-pulse {
-  0%   { transform: scale(1);    opacity: 0.7; }
-  60%  { transform: scale(1.22); opacity: 0.15; }
-  100% { transform: scale(1.35); opacity: 0; }
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  60% {
+    transform: scale(1.22);
+    opacity: 0.15;
+  }
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
 }
 
 .summon-source-ring {
@@ -777,10 +998,21 @@ body {
 }
 
 @keyframes auto-layout-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes auto-layout-pulse {
-  0%, 100% { box-shadow: 0 4px 24px rgba(0,0,0,0.4), 0 0 0 0 rgba(34,197,94,0.15); }
-  50%       { box-shadow: 0 4px 24px rgba(0,0,0,0.4), 0 0 0 6px rgba(34,197,94,0); }
+  0%,
+  100% {
+    box-shadow:
+      0 4px 24px rgba(0, 0, 0, 0.4),
+      0 0 0 0 rgba(34, 197, 94, 0.15);
+  }
+  50% {
+    box-shadow:
+      0 4px 24px rgba(0, 0, 0, 0.4),
+      0 0 0 6px rgba(34, 197, 94, 0);
+  }
 }

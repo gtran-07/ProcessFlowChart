@@ -12,7 +12,7 @@
  * In design mode, hovering an edge turns it red and shows a delete tooltip.
  */
 
-import React, { useLayoutEffect, useRef } from 'react';
+import React, { useLayoutEffect, useMemo, useRef } from 'react';
 import { computeEdgePath, NODE_W, NODE_H, GAP_X } from '../../utils/layout';
 import type { GraphEdge, GraphGroup, Position, GraphNode } from '../../types/graph';
 import { useGraphStore } from '../../store/graphStore';
@@ -24,6 +24,14 @@ const VGROOVE_TIERS: Record<string, { grooveW: number; hlOpacity: number }> = {
   standard:  { grooveW: 4,  hlOpacity: 0.18 },
   priority:  { grooveW: 7,  hlOpacity: 0.20 },
   critical:  { grooveW: 11, hlOpacity: 0.22 },
+};
+
+// Laser stroke width per path type — wider beam for higher energy tiers.
+const LASER_STROKE_W: Record<string, number> = {
+  optional: 1.5,
+  standard: 2,
+  priority: 2.5,
+  critical: 3,
 };
 
 interface EdgeLayerProps {
@@ -154,6 +162,107 @@ function finalizeEdge(path: SVGPathElement) {
   const nodeOwnerMap: Record<string, string> = {};
   nodes.forEach((node) => { nodeOwnerMap[node.id] = node.owner; });
 
+  // ── Port-spread offsets ───────────────────────────────────────────────────
+  // Memoized on [edges, positions, groups] — stable across hover re-renders.
+  // Assigns each edge a startDy and endDy so that multiple edges sharing the
+  // same connector point fan out vertically instead of stacking on top of each other.
+  const edgeOffsetMap = useMemo((): Map<string, { startDy: number; endDy: number }> => {
+    type EdgeData = { fromEffId: string; toEffId: string; fromCX: number; fromCY: number; toCX: number; toCY: number };
+    const dataMap = new Map<string, EdgeData>();
+
+    for (const edge of edges) {
+      const key = `${edge.from}:${edge.to}`;
+
+      // Resolve collapsed-group endpoints inline (mirrors effectiveFromPos/effectiveToPos).
+      const fromCollapsed = getCollapsedGroupForNode(edge.from, groups);
+      const toCollapsed   = getCollapsedGroupForNode(edge.to,   groups);
+      if (fromCollapsed && toCollapsed && fromCollapsed.id === toCollapsed.id) continue;
+
+      const fromEffId = fromCollapsed?.id ?? edge.from;
+      const toEffId   = toCollapsed?.id   ?? edge.to;
+
+      const fromRaw = fromCollapsed
+        ? (positions[fromCollapsed.id] ? { x: positions[fromCollapsed.id].x - NODE_W / 2, y: positions[fromCollapsed.id].y - NODE_H / 2 } : null)
+        : (positions[edge.from] ?? null);
+      const toRaw = toCollapsed
+        ? (positions[toCollapsed.id] ? { x: positions[toCollapsed.id].x - NODE_W / 2, y: positions[toCollapsed.id].y - NODE_H / 2 } : null)
+        : (positions[edge.to] ?? null);
+
+      if (!fromRaw || !toRaw) continue;
+
+      dataMap.set(key, {
+        fromEffId,
+        toEffId,
+        fromCX: fromRaw.x + NODE_W / 2,
+        fromCY: fromRaw.y + NODE_H / 2,
+        toCX:   toRaw.x   + NODE_W / 2,
+        toCY:   toRaw.y   + NODE_H / 2,
+      });
+    }
+
+    // Group edge keys by their effective source and target connector IDs.
+    const fromGroups = new Map<string, string[]>();
+    const toGroups   = new Map<string, string[]>();
+    for (const [key, d] of dataMap) {
+      if (!fromGroups.has(d.fromEffId)) fromGroups.set(d.fromEffId, []);
+      fromGroups.get(d.fromEffId)!.push(key);
+      if (!toGroups.has(d.toEffId)) toGroups.set(d.toEffId, []);
+      toGroups.get(d.toEffId)!.push(key);
+    }
+
+    // Sort each group to minimise crossings using the full edge angle (X + Y).
+    // Both fans sort by atan2(dy, dx) of the edge vector, which is in (-90°, 90°)
+    // for forward edges (dx > 0) and continuous — avoiding the ±180° discontinuity
+    // that a T→S angle would have for sources to the left of the target.
+    //
+    // Source fan (ascending): upper port → edge angling most upward (negative angle,
+    // target above-right); lower port → edge angling most downward (positive angle).
+    //
+    // Target fan (descending): upper port → edge whose source is most above the target
+    // (large positive angle = edge travels downward); lower port → source most below
+    // (negative angle = edge travels upward to reach target).
+    for (const keys of fromGroups.values()) {
+      keys.sort((a, b) => {
+        const da = dataMap.get(a)!;
+        const db = dataMap.get(b)!;
+        return Math.atan2(da.toCY - da.fromCY, da.toCX - da.fromCX)
+             - Math.atan2(db.toCY - db.fromCY, db.toCX - db.fromCX);
+      });
+    }
+    for (const keys of toGroups.values()) {
+      keys.sort((a, b) => {
+        const da = dataMap.get(a)!;
+        const db = dataMap.get(b)!;
+        return Math.atan2(db.toCY - db.fromCY, db.toCX - db.fromCX)
+             - Math.atan2(da.toCY - da.fromCY, da.toCX - da.fromCX);
+      });
+    }
+
+    // Compute per-edge vertical offset within its group.
+    const MAX_SPREAD = NODE_H * 1.1;  // total spread range — can extend slightly beyond node face
+    const MAX_STEP   = 36;            // cap per-edge gap so sparse multi-edges don't over-spread
+    function offset(index: number, total: number): number {
+      if (total <= 1) return 0;
+      const step = Math.min(MAX_SPREAD / (total - 1), MAX_STEP);
+      return (index - (total - 1) / 2) * step;
+    }
+
+    const startDyMap = new Map<string, number>();
+    const endDyMap   = new Map<string, number>();
+    for (const keys of fromGroups.values()) {
+      keys.forEach((k, i) => startDyMap.set(k, offset(i, keys.length)));
+    }
+    for (const keys of toGroups.values()) {
+      keys.forEach((k, i) => endDyMap.set(k, offset(i, keys.length)));
+    }
+
+    const result = new Map<string, { startDy: number; endDy: number }>();
+    for (const key of dataMap.keys()) {
+      result.set(key, { startDy: startDyMap.get(key) ?? 0, endDy: endDyMap.get(key) ?? 0 });
+    }
+    return result;
+  }, [edges, positions, groups]);
+
   return (
     <g ref={containerRef}>
       {edges.map((edge) => {
@@ -166,7 +275,9 @@ function finalizeEdge(path: SVGPathElement) {
         const toGroup = getCollapsedGroupForNode(edge.to, groups);
         if (fromGroup && toGroup && fromGroup.id === toGroup.id) return null;
 
-        const pathD = computeEdgePath(fromPos, toPos);
+        const edgeKey = `${edge.from}:${edge.to}`;
+        const { startDy = 0, endDy = 0 } = edgeOffsetMap.get(edgeKey) ?? {};
+        const pathD = computeEdgePath(fromPos, toPos, startDy, endDy);
 
         // Determine if this edge is "cross-lane" (connects nodes in different owner lanes)
         // Cross-lane edges are rendered dashed and dimmed in LANES view
@@ -227,7 +338,19 @@ function finalizeEdge(path: SVGPathElement) {
           : (ownerColors[nodeOwnerMap[edge.from]] ?? 'var(--accent)');
 
         // V-Groove tier — always applied; defaults to 'standard' when pathType absent
-        const tier = VGROOVE_TIERS[edge.pathType ?? 'standard'] ?? VGROOVE_TIERS.standard;
+        const pathType = edge.pathType ?? 'standard';
+        const tier = VGROOVE_TIERS[pathType] ?? VGROOVE_TIERS.standard;
+
+        // Rim highlight offset — perpendicular to the edge direction so the 1px highlight
+        // falls on the inner lower/left side regardless of path orientation.
+        // Uses the actual offset endpoints (including port-spread) for an accurate angle.
+        const _rimAngle = Math.atan2(
+          (toPos.y + NODE_H / 2 + endDy) - (fromPos.y + NODE_H / 2 + startDy),
+          (toPos.x - 10) - (fromPos.x + NODE_W),
+        );
+        const _rimHalf = (tier.grooveW - 1) / 2;
+        const rimDx = -Math.sin(_rimAngle) * _rimHalf;
+        const rimDy =  Math.cos(_rimAngle) * _rimHalf;
 
         let strokeColor = '#070a10';
         let opacity = 1;
@@ -361,8 +484,6 @@ function finalizeEdge(path: SVGPathElement) {
               stroke={strokeColor}
               strokeWidth={tier.grooveW}
               opacity={opacity}
-              markerEnd={rm ? markerEnd : undefined}
-              data-marker-end={rm ? undefined : markerEnd}
               style={{
                 color: strokeColor,
                 ['--edge-owner-color' as string]: highlightColor,
@@ -370,7 +491,8 @@ function finalizeEdge(path: SVGPathElement) {
                 pointerEvents: 'none',
               }}
             />
-            {/* Bottom-rim highlight — 1px faint white at the bottom inner edge of the groove */}
+            {/* Bottom-rim highlight — 1px faint white at the inner edge of the groove,
+                offset perpendicular to the edge direction (down for horizontal, left for vertical) */}
             <path
               className="edge-rim"
               d={pathD}
@@ -378,22 +500,32 @@ function finalizeEdge(path: SVGPathElement) {
               stroke={`rgba(220,225,235,${tier.hlOpacity})`}
               strokeWidth={1}
               opacity={isGhostMode ? 0 : opacity}
-              transform={`translate(0, ${(tier.grooveW - 1) / 2})`}
+              transform={`translate(${rimDx}, ${rimDy})`}
               style={{ pointerEvents: 'none' }}
             />
-            {/* Laser sweep overlay — only on hover-highlighted edges, not for reduced-motion users */}
+            {/* Laser sweep overlay — tier class drives energy level (speed, beam count, glow).
+                Critical gets a second phase-offset arc for an electrical crackling effect. */}
             {isHoverHighlighted && !rm && (
-              <path
-                className="edge-laser"
-                d={pathD}
-                fill="none"
-                stroke={highlightColor}
-                strokeWidth={2}
-                style={{
-                  color: highlightColor,
-                  pointerEvents: 'none',
-                }}
-              />
+              <>
+                <path
+                  className={`edge-laser edge-laser--${pathType}`}
+                  d={pathD}
+                  fill="none"
+                  stroke={highlightColor}
+                  strokeWidth={LASER_STROKE_W[pathType] ?? 2}
+                  style={{ color: highlightColor, pointerEvents: 'none' }}
+                />
+                {pathType === 'critical' && (
+                  <path
+                    className="edge-laser edge-laser--critical"
+                    d={pathD}
+                    fill="none"
+                    stroke={highlightColor}
+                    strokeWidth={(LASER_STROKE_W.critical) * 0.6}
+                    style={{ color: highlightColor, pointerEvents: 'none', animationDelay: '-0.14s', opacity: 0.65 }}
+                  />
+                )}
+              </>
             )}
             {/* Trace Path overlay — drawn on top of the edge when it's part of the active trace */}
             {isTraced && (
@@ -536,7 +668,6 @@ export function GhostEdge({ sourcePosition, targetPoint }: GhostEdgeProps) {
       strokeWidth={1.5}
       strokeDasharray="6 4"
       opacity={0.8}
-      markerEnd="url(#arrow-ghost)"
       style={{ pointerEvents: 'none' }}
     />
   );

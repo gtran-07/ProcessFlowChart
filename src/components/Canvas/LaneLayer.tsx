@@ -43,7 +43,7 @@ export function LaneLayer({ nodes, positions, laneMetrics, ownerColors, viewMode
               stroke="var(--border)" strokeWidth={1} />
             <g
               style={{ pointerEvents: 'auto', cursor: 'pointer' }}
-              onClick={() => onFocusOwner?.(owner)}
+              onDoubleClick={() => onFocusOwner?.(owner)}
             >
               <title>{focusedOwner === owner ? `Exit focus on ${owner}` : `Focus on ${owner} lane`}</title>
               <rect

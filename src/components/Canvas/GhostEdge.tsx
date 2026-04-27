@@ -22,6 +22,6 @@ export function GhostEdge({ sourcePosition, targetPoint }: GhostEdgeProps) {
     <path
       d={`M ${startX} ${startY} C ${cx1} ${startY}, ${cx2} ${endY}, ${endX} ${endY}`}
       fill="none" stroke="#a78bfa" strokeWidth={1.5} strokeDasharray="6 4"
-      opacity={0.8} markerEnd="url(#arrow-ghost)" style={{ pointerEvents: 'none' }} />
+      opacity={0.8} style={{ pointerEvents: 'none' }} />
   );
 }

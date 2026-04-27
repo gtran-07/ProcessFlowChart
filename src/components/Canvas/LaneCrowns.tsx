@@ -78,7 +78,7 @@ export function LaneCrowns({ nodes, laneMetrics, ownerColors, transform, canvasH
           borderRight: '1px solid var(--border)',
           outline: focusedOwner === owner ? `2px solid ${color}` : undefined,
         }}
-        onClick={() => onFocusOwner?.(owner)}
+        onDoubleClick={() => onFocusOwner?.(owner)}
       >
         {/* Colored accent bar — mirrors the 3px rect in LaneLayer */}
         <div
