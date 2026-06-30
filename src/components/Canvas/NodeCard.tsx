@@ -379,6 +379,17 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
       return;
     }
 
+    // When path highlight is active on a different node, defer selection so that a
+    // following dblclick can cancel the timer before setSelectedNode clears pathHighlightNodeId.
+    const { pathHighlightNodeId: phId } = useGraphStore.getState();
+    if (!designMode && phId && phId !== node.id) {
+      clickTimerRef.current = setTimeout(() => {
+        clickTimerRef.current = null;
+        setSelectedNode(node.id);
+      }, 220);
+      return;
+    }
+
     setSelectedNode(node.id);
   }
 
@@ -386,7 +397,10 @@ export const NodeCard = memo(function NodeCard({ node, position, color, screenTo
   function handleDoubleClick(e: React.MouseEvent) {
     e.stopPropagation();
     if (discoveryPhase === 'reconstruction') return;
-    if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
     onFocusRequest(node.id);
   }
 

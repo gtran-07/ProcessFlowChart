@@ -2,7 +2,7 @@
 
 .bar {
   position: absolute;
-  bottom: 112px; /* above PhaseNavigator (56px) with 56px of its own height + gap */
+  bottom: 16px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;

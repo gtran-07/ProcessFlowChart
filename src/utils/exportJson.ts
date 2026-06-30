@@ -19,7 +19,7 @@ import type {
 } from "../types/graph";
 
 const DEFAULT_META: GraphMeta = {
-  note: "This is a FlowGraph chart file. Open it with the FlowGraph app to view and edit the interactive dependency flowchart.",
+  note: "This is a GRAPH chart file. Open it with the GRAPH app to view and edit the interactive dependency flowchart.",
   app: "https://gtran-07.github.io/TGRAPH/",
   author: "Giang Tran",
   usage:
@@ -82,7 +82,7 @@ export function buildExportPayload(
 
 export function exportGraphToJson(
   nodes: GraphNode[],
-  filename = "flowgraph.json",
+  filename = "tgraph.json",
   groups?: GraphGroup[],
   phases?: GraphPhase[],
   tagRegistry?: NodeTag[],

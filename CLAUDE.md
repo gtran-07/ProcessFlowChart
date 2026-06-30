@@ -8,6 +8,19 @@ Built completely with **Claude Code**. Authored by **Giang Tran**.
 
 FlowGraph is a browser-based interactive DAG viewer and editor. Users load, create, and edit directed acyclic graphs stored as JSON files. No server — runs entirely in the browser, hosted on GitHub Pages.
 
+### Top-Level App Modes
+
+The app has four primary modes (not sub-tools). When someone says "mode" without a qualifier, assume one of these:
+
+| Mode | Trigger | Store flag |
+|------|---------|-----------|
+| **Explore** | Default / view mode | `designMode: false` |
+| **Design** | Design mode toggle | `designMode: true` |
+| **Discover** | Cinema/Discovery | `discoveryActive: true` |
+| **Path** | Critical Path Explorer | `criticalPathActive: true` |
+
+**Rule**: When entering **Path mode** (`toggleCriticalPath` on entry) or **Discover mode** (`startDiscovery`), exit all active user focus modes first — node focus (`exitFocusMode`), owner focus (`exitOwnerFocus`), critical path focus (`exitCriticalFocus`), and cinema (`exitDiscovery`) — so the user sees the full graph. Do NOT apply this reset to design sub-tools (e.g., `tracePath` tool inside Design mode).
+
 ---
 
 ## Session Protocol
@@ -80,6 +93,8 @@ npm run lint    # ESLint
 
 Use `get_architecture_overview` for file/component structure.
 
+**Sample files**: `utils/samples.ts` exports `SAMPLE_FILES` — an array of bundled JSON samples (`small/medium/large/xlarge`). All data is imported directly (no fetch needed; works offline/`file://`). Used by `SamplePickerModal`.
+
 ---
 
 ## Architecture Rules
@@ -94,6 +109,7 @@ Use `get_architecture_overview` for file/component structure.
 - `phases[].groupIds` — optional; assigns collapsed groups to a phase (parallel to `nodeIds`).
 - `_layout` — omitted when no positions saved yet. Legacy plain array format still accepted on load.
 - `cinemaScript`, `cinemaBottleneck`, `cinemaSkip` on nodes and groups — optional; omitted when not set.
+- `edgePathTypes` — serialized inside `_layout` as `Record<string, PathType>`. Omitted when empty. Legacy remapping applied on load.
 
 ### Serialization
 `buildExportPayload()` in `exportJson.ts` is the **single source of truth**. All save paths call it — never duplicate.
@@ -103,6 +119,8 @@ Use `get_architecture_overview` for file/component structure.
 2. `graphStore.ts` — add to state, `clearGraph`, `loadData` (extract from `savedLayout` cast with a type-appropriate empty default: `{}`, `[]`, `null`, or `false`).
 3. `exportJson.ts` — add param to `buildExportPayload()`. Emit conditionally (omit when empty/default).
 4. `Header.tsx` — extract from `obj` in `parseAndLoad()`, attach to `savedLayout`; add to every call site; update `useCallback` dep arrays.
+
+**`_layout`-nested fields** (stored inside the `_layout` object, not as top-level JSON keys): `edgePathTypes`. These are extracted inside `loadData()` from the `savedLayout` cast, not from `obj` in `parseAndLoad()`. Follow the same 4 touch points but the extraction happens one level deeper.
 
 ### File I/O Modes
 | Mode                     | When                                                   | Save behaviour                |
@@ -176,6 +194,16 @@ Lane-spotlight in Lanes view. Isolates an owner's nodes with upstream/downstream
 - Node roles: `owned | upstream | downstream | partial | null` — passed as `laneFocusRole` prop.
 - Entrance animation suppressed on enter/exit (same as view-mode switch).
 
+### Summon Mode
+Floating connection-creation workflow. Activated on a node (or multi-select) in Design mode; shows a `SummonDock` panel listing all other nodes grouped by owner.
+
+- **State**: `summonActive`, `summonSourceId` (primary), `summonSourceIds` (all selected), `summonFilter`, `summonShowRing`, `summonConnected` (Set of already-connected targets).
+- **Badge inference**: `likely` (shares a tag with any source), `upstream` (has edge → any source), `downstream` (any source has edge → it). Sort: unconnected before connected; badge priority: likely > upstream > downstream > none.
+- **Ghost ring**: when filtered count ≤ 12 and `summonShowRing = true`, `SummonOverlay` renders highlight rings around candidate nodes directly on the canvas via portal into `#canvas-wrap`.
+- **Connect**: `connectToSource(targetId)` creates edges from **all** source nodes to the target and adds to `summonConnected`. Existing edges are never duplicated.
+- **Dim layer**: `SummonOverlay` portals a dark glass overlay (`rgba(8,10,16,0.62)`) into `#canvas-wrap` with `zIndex: 120`, `pointerEvents: none`.
+- **Multi-source**: `summonSourceIds` = all selected node IDs; `summonSourceId` = the primary (last clicked). Badge inference is the union of all source tags/edges.
+
 ### Entrance Animations
 Staggered on file load and focus-mode entry. Suppressed on view-mode switch, focus exit, owner-focus toggle, and filter changes.
 
@@ -197,11 +225,22 @@ Staggered on file load and focus-mode entry. Suppressed on view-mode switch, foc
 - **Derived, not stored** — edges are built from `node.dependencies` by `rebuildEdgesFromNodes()`. You cannot persist metadata on the edge object itself.
 - **Per-edge metadata** — store in a parallel `Record<string, T>` map in state (keyed by `"${fromId}:${toId}"`). Inject as a runtime-only property on the edge object after each rebuild call. Follow the `edgePathTypes` pattern for any future edge-level data.
 
+### Edge Path Types (V-Groove)
+Edges carry a structural weight rendered as a V-groove engraving: `PathType = 'optional' | 'standard' | 'priority' | 'critical'`.
+
+- **Storage**: `edgePathTypes: Record<string, PathType>` in store state — a parallel map keyed by `"${fromId}:${toId}"`. **Serialized** into JSON alongside `_layout`.
+- **Runtime injection**: `pathType` is set as a runtime-only property on each `GraphEdge` after `rebuildEdgesFromNodes()`. Never stored on the edge object itself.
+- **Assignment UI**: `PathTypePopover` — a portal popover triggered by clicking an edge in 'select' tool mode. ESC or click-outside closes without change.
+- **Batch assignment**: `Trace Path` design tool. Uses `findAllPaths()` from `pathTracing.ts` (iterative DFS, max 10 paths by default) to enumerate all directed paths between two chosen endpoints. User picks a path; all its edges get the chosen PathType in one undo snapshot. `setEdgePathTypeBatch()` in store.
+- **Undo**: `edgePathTypes` is included in every undo/redo snapshot.
+- **Critical Path Explorer**: When any edge has `pathType = 'critical'`, the Explorer panel can be opened. It runs `extractCriticalChains()` from `criticalPath.ts` (union-find connected components → topological sort) and displays chains. Supports Browse / Walk (step-by-step with auto-pan) / Compare (multi-chain overlay, shared bottleneck detection) views. `CHAIN_PALETTE` assigns a color per chain.
+- **Critical focus mode**: `criticalFocusActive` dims non-chain nodes. A snapshot (`preCriticalFocusSnapshot`) is taken on enter; restore on exit.
+
 ### SVG Portal Rule
 Any popover, dropdown, or tooltip triggered by a click inside SVG must render via `ReactDOM.createPortal(content, document.body)` with `position: fixed`.
 
 ### Multi-Mode Visual Precedence
-When multiple display modes affect the same visual property on an edge or node, establish the precedence chain explicitly at the time you add the mode. Current resolution: **structural properties** (strokeWidth) apply in all modes; **narrative properties** (opacity, color, dash) yield to higher-priority modes. Priority order: cinema > owner focus > river flow.
+When multiple display modes affect the same visual property on an edge or node, establish the precedence chain explicitly at the time you add the mode. Current resolution: **structural properties** (strokeWidth, V-groove tier) apply in all modes; **narrative properties** (opacity, color, dash) yield to higher-priority modes. Priority order: cinema > owner focus > critical path focus > edge path type.
 
 ### Space-Key Pan
 Holding `Space` activates pan-anywhere mode regardless of active design tool. Cursor → `grab`; release restores previous cursor.
@@ -209,10 +248,15 @@ Holding `Space` activates pan-anywhere mode regardless of active design tool. Cu
 ### Layout Cache
 `layoutCache` holds `{positions, transform}` keyed by view mode (`'dag'` / `'lanes'`). Always call `saveLayoutToCache()` after drag-drop, manual layout change, or auto-layout completion.
 
+### flyTo
+`flyTo(target: Transform)` sets `flyTarget` in store state. `Canvas.tsx` reads this and runs a smooth eased animation (`easeOutCubic`) to pan/zoom to the target transform, then clears `flyTarget`. Used by the Critical Path Explorer "Walk" mode to auto-pan to each chain node.
+
 ### Web Workers
 Vite supports `new Worker(new URL('../workers/file.ts', import.meta.url), { type: 'module' })` natively — no config change needed. The worker is bundled as a separate chunk automatically.
 
-**Module-level singleton exception to "all state in store":** Resources that need imperative lifecycle management (terminate/recreate, cancel) — such as Worker instances — belong at module level outside Zustand, not in store state. Storing them in state would trigger renders on reassignment. Declare them as `let workerRef: Worker | null = null` before `export const useGraphStore`.
+**Auto Layout Worker**: `workers/autoLayout.worker.ts` offloads graph layout to a Web Worker. It imports `autoLayout()` from `utils/autoLayout/index.ts`, which wraps `computeLayout` / `computeLaneLayout` with multi-component support (union-find tiling, group-aware inner layout, `selectedOnly` bbox fitting). The worker sends back `{ type: 'progress', phase }` messages during computation and `{ type: 'done', positions }` when complete.
+
+**Module-level singleton exception to "all state in store":** Resources that need imperative lifecycle management (terminate/recreate, cancel) — such as Worker instances — belong at module level outside Zustand, not in store state. Storing them in state would trigger renders on reassignment. `let autoLayoutWorker: Worker | null = null` is declared before `export const useGraphStore` in `graphStore.ts`.
 
 ### Canvas IIFE Ordering
 The entrance-suppression IIFE in Canvas runs inline in the render function body. Any `const`/`let` state variable it references must be declared **before** it — the temporal dead zone causes a TS error (`used before declaration`) otherwise. When adding new Canvas state that the suppression logic needs, declare it above the IIFE block.

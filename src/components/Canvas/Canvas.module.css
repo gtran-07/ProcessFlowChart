@@ -38,11 +38,7 @@
 }
 .emptyIcon {
   width: 56px; height: 56px;
-  background: linear-gradient(135deg, rgba(79,158,255,.15), rgba(123,94,167,.15));
-  border: 1px solid var(--border2);
-  border-radius: 14px;
   display: flex; align-items: center; justify-content: center;
-  color: var(--accent); font-size: 24px;
   margin-bottom: 4px;
   /* entrance → then idle float + glow */
   animation:

@@ -1250,10 +1250,38 @@ export function UserGuideModal() {
         {/* Header */}
         <div className={styles.header}>
           <div className={styles.headerLeft}>
-            <div className={styles.logo}>⬡</div>
+            <div className={styles.logo}>
+              <svg width="28" height="28" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="tg-grad-guide" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#4f9eff"/>
+                    <stop offset="100%" stopColor="#7b5ea7"/>
+                  </linearGradient>
+                </defs>
+                <polygon points="9,2 23,2 30,9 30,23 23,30 9,30 2,23 2,9" fill="url(#tg-grad-guide)"/>
+                <g stroke="#ffffff" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" fill="none" opacity="0.95">
+                  <line x1="16" y1="8" x2="11" y2="15"/>
+                  <line x1="16" y1="8" x2="21" y2="15"/>
+                  <line x1="11" y1="15" x2="16" y2="23"/>
+                  <line x1="21" y1="15" x2="16" y2="23"/>
+                </g>
+                <g fill="#ffffff" opacity="0.9">
+                  <polygon points="13.2,11.8 14.7,12.3 13.7,13.5"/>
+                  <polygon points="18.8,11.8 18.3,13.5 17.3,12.3"/>
+                  <polygon points="13.3,19.2 14.8,18.7 14.1,20.1"/>
+                  <polygon points="18.7,19.2 17.2,18.7 17.9,20.1"/>
+                </g>
+                <g fill="#ffffff">
+                  <circle cx="16" cy="8" r="2.3"/>
+                  <circle cx="11" cy="15" r="2.3"/>
+                  <circle cx="21" cy="15" r="2.3"/>
+                  <circle cx="16" cy="23" r="2.3"/>
+                </g>
+              </svg>
+            </div>
             <div>
-              <div className={styles.title}>FlowGraph User Guide</div>
-              <div className={styles.subtitle}>Everything you need to know about using FlowGraph</div>
+              <div className={styles.title}>GRAPH User Guide</div>
+              <div className={styles.subtitle}>Everything you need to know about using GRAPH</div>
             </div>
           </div>
           <div className={styles.headerRight}>

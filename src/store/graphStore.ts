@@ -1452,14 +1452,44 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   setFocusDepth: (depth: 'neighbors' | 'full') => {
     const state = get();
     if (!state.focusMode || !state.focusNodeId) return;
-    const { visibleNodes, visibleEdges } = deriveVisibility(
-      state.allNodes, state.allEdges, state.activeOwners, true, state.focusNodeId, state.groups, depth
-    );
-    const { positions, laneMetrics } = derivePositions(
-      visibleNodes, visibleEdges, state.viewMode, state.activeOwners, state.allNodes
-    );
-    set({ focusDepth: depth, visibleNodes, visibleEdges, positions, laneMetrics });
-    setTimeout(() => get().fitToScreen(), 60);
+
+    if (depth === 'full') {
+      // Show all nodes with the path-highlight overlay: ancestors/descendants highlighted,
+      // unrelated nodes dimmed. Restore the full-graph layout from the pre-focus snapshot.
+      const { visibleNodes, visibleEdges } = deriveVisibility(
+        state.allNodes, state.allEdges, state.activeOwners, false, null, state.groups
+      );
+      const positions = state.preFocusSnapshot?.positions ?? state.positions;
+      const laneMetrics = state.preFocusSnapshot?.laneMetrics ?? state.laneMetrics;
+      set({
+        focusDepth: 'full',
+        visibleNodes,
+        visibleEdges,
+        positions,
+        laneMetrics,
+        pathHighlightNodeId: state.focusNodeId,
+        pathHighlightMode: 'both',
+      });
+      // The pathHighlight Canvas effect auto-pans to frame the focused path.
+    } else {
+      // Neighbors: filter visible set to 1-hop, clear path highlight overlay.
+      const { visibleNodes, visibleEdges } = deriveVisibility(
+        state.allNodes, state.allEdges, state.activeOwners, true, state.focusNodeId, state.groups, 'neighbors'
+      );
+      const { positions, laneMetrics } = derivePositions(
+        visibleNodes, visibleEdges, state.viewMode, state.activeOwners, state.allNodes
+      );
+      set({
+        focusDepth: 'neighbors',
+        visibleNodes,
+        visibleEdges,
+        positions,
+        laneMetrics,
+        pathHighlightNodeId: null,
+        pathHighlightMode: null,
+      });
+      setTimeout(() => get().fitToScreen(), 60);
+    }
   },
 
   // ── setLastJumpedNode ─────────────────────────────────────────────────────
@@ -1722,7 +1752,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       visibleNodes, visibleEdges, state.viewMode, state.activeOwners, state.allNodes
     );
 
-    set({ focusMode: true, focusNodeId: nodeId, focusDepth: 'neighbors', selectedNodeId: nodeId, hoveredNodeId: null, preFocusSnapshot, visibleNodes, visibleEdges, positions, laneMetrics });
+    set({ focusMode: true, focusNodeId: nodeId, focusDepth: 'neighbors', selectedNodeId: nodeId, hoveredNodeId: null, pathHighlightNodeId: null, pathHighlightMode: null, preFocusSnapshot, visibleNodes, visibleEdges, positions, laneMetrics });
     setTimeout(() => get().fitToScreen(), 60);
   },
 
@@ -1751,6 +1781,8 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
         focusNodeId: null,
         focusDepth: 'neighbors',
         hoveredNodeId: null,
+        pathHighlightNodeId: null,
+        pathHighlightMode: null,
         preFocusSnapshot: null,
         visibleNodes,
         visibleEdges,
@@ -1760,7 +1792,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       });
     } else {
       // View mode changed while in focus — discard snapshot, rebuild fresh.
-      set({ focusMode: false, focusNodeId: null, focusDepth: 'neighbors', hoveredNodeId: null, preFocusSnapshot: null });
+      set({ focusMode: false, focusNodeId: null, focusDepth: 'neighbors', hoveredNodeId: null, pathHighlightNodeId: null, pathHighlightMode: null, preFocusSnapshot: null });
       get().rebuildGraph();
       setTimeout(() => get().fitToScreen(), 60);
     }
@@ -3094,8 +3126,15 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       });
       return;
     }
-    // Exit cinema if active before entering critical path mode
+    // Exit all user focus modes before entering Path mode so the full graph is visible.
+    // exitOwnerFocus restores focusMode when owner focus was entered from node focus,
+    // so we re-read state after and exit node focus a second time if needed.
     if (s.discoveryActive) s.exitDiscovery();
+    if (s.criticalFocusActive) s.exitCriticalFocus();
+    if (s.focusedOwner !== null) s.exitOwnerFocus();
+    if (s.focusMode) s.exitFocusMode();
+    const afterExits = get();
+    if (afterExits.focusMode) afterExits.exitFocusMode();
     const { chains, bottlenecks } = extractCriticalChains(
       s.allNodes, s.groups, s.allEdges, s.edgePathTypes, s.phases,
     );
@@ -3141,6 +3180,8 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       criticalCompareMode: false,
       criticalWalkChainId: null,
       criticalWalkCursor: 0,
+      selectedNodeId: null,
+      selectedGroupId: null,
       ...(flyTarget ? { flyTarget } : {}),
     });
   },

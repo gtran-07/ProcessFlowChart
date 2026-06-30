@@ -1300,7 +1300,7 @@ export function Canvas() {
         flyTo({ x: W / 2 - cx * k, y: H / 2 - cy * k, k: Math.max(k, 0.1) });
       }
     }
-  }, [pathHighlightNodeId, pathHighlightMode, allEdges, flyTo]);
+  }, [pathHighlightNodeId, pathHighlightMode, allEdges, flyTo, focusMode, focusNodeId]);
 
   // ── Critical Path Explorer overlay — highlight chain members (positive-only) ─
   useEffect(() => {
@@ -1377,7 +1377,33 @@ export function Canvas() {
     if (!criticalFocusActive) {
       graphRoot.classList.add('critical-path-dim-mode');
     }
-  }, [criticalPathActive, criticalSelectedIds, criticalChains, criticalCompareMode, criticalWalkChainId, criticalWalkCursor, criticalBottlenecks, criticalFocusActive]);
+  }, [criticalPathActive, criticalSelectedIds, criticalChains, criticalCompareMode, criticalWalkChainId, criticalWalkCursor, criticalBottlenecks, criticalFocusActive, focusMode]);
+
+  // ── Critical path: un-dim neighbors of selected node ─────────────────────
+  // When a node is selected in critical path mode, its 1-hop neighbors should
+  // stay visible (not dimmed) so the user can see the surrounding context.
+  // Uses data-selected-neighbor (not a class) so React re-renders don't wipe it.
+  useEffect(() => {
+    const graphRoot = document.getElementById('graph-root');
+    if (!graphRoot) return;
+
+    graphRoot.querySelectorAll('[data-selected-neighbor]').forEach(el =>
+      el.removeAttribute('data-selected-neighbor')
+    );
+
+    if (!criticalPathActive || !selectedNodeId) return;
+
+    const neighborIds = new Set<string>();
+    for (const edge of allEdges) {
+      if (edge.from === selectedNodeId) neighborIds.add(edge.to);
+      if (edge.to === selectedNodeId) neighborIds.add(edge.from);
+    }
+
+    graphRoot.querySelectorAll('.node-group, .group-overlay').forEach(el => {
+      const id = el.getAttribute('data-id') ?? el.getAttribute('data-group-id');
+      if (id && neighborIds.has(id)) el.setAttribute('data-selected-neighbor', 'true');
+    });
+  }, [criticalPathActive, selectedNodeId, allEdges]);
 
   // ── Stable focus-request handler (prevents NodeCard memo invalidation) ─
   const handleFocusRequest = useCallback(
@@ -1531,8 +1557,38 @@ export function Canvas() {
       {/* Empty state — shown when no JSON has been loaded yet (hidden in design mode) */}
       {!hasData && !designMode && (
         <div className={styles.emptyState}>
-          <div className={styles.emptyIcon}>⬡</div>
-          <div className={styles.emptyTitle}>FlowGraph</div>
+          <div className={styles.emptyIcon}>
+            <svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="tg-grad-empty" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor="#4f9eff"/>
+                  <stop offset="100%" stopColor="#7b5ea7"/>
+                </linearGradient>
+              </defs>
+              <polygon points="9,2 23,2 30,9 30,23 23,30 9,30 2,23 2,9" fill="url(#tg-grad-empty)"/>
+              <g stroke="#ffffff" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" fill="none" opacity="0.95">
+                <line x1="16" y1="8" x2="11" y2="15"/>
+                <line x1="16" y1="8" x2="21" y2="15"/>
+                <line x1="11" y1="15" x2="16" y2="23"/>
+                <line x1="21" y1="15" x2="16" y2="23"/>
+              </g>
+              <g fill="#ffffff" opacity="0.9">
+                <polygon points="13.2,11.8 14.7,12.3 13.7,13.5"/>
+                <polygon points="18.8,11.8 18.3,13.5 17.3,12.3"/>
+                <polygon points="13.3,19.2 14.8,18.7 14.1,20.1"/>
+                <polygon points="18.7,19.2 17.2,18.7 17.9,20.1"/>
+              </g>
+              <g fill="#ffffff">
+                <circle cx="16" cy="8" r="2.3"/>
+                <circle cx="11" cy="15" r="2.3"/>
+                <circle cx="21" cy="15" r="2.3"/>
+                <circle cx="16" cy="23" r="2.3"/>
+              </g>
+            </svg>
+          </div>
+          <div className={styles.emptyTitle}>
+            <span style={{color: 'var(--accent)'}}>TG</span>RAPh
+          </div>
           <div className={styles.emptySub}>
             Visualize and edit dependency graphs
           </div>

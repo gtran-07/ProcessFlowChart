@@ -3,3 +3,6 @@
 
 # Generated app profile for external design sessions
 APP_PROFILE.md
+
+# Local Claude settings
+.claude/settings.local.json

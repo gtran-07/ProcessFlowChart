@@ -168,7 +168,7 @@ export function Header() {
     if (window.showOpenFilePicker) {
       try {
         const [handle] = await window.showOpenFilePicker({
-          types: [{ description: 'FlowGraph JSON', accept: { 'application/json': ['.json'] } }],
+          types: [{ description: 'GRAPH JSON', accept: { 'application/json': ['.json'] } }],
           multiple: false,
         });
         const file = await handle.getFile();
@@ -256,8 +256,8 @@ export function Header() {
       // choose a save location so the chart becomes linked immediately.
       try {
         const handle = await window.showSaveFilePicker({
-          suggestedName: currentFileName ?? 'flowgraph.json',
-          types: [{ description: 'FlowGraph JSON', accept: { 'application/json': ['.json'] } }],
+          suggestedName: currentFileName ?? 'tgraph.json',
+          types: [{ description: 'GRAPH JSON', accept: { 'application/json': ['.json'] } }],
         });
         const payload = buildExportPayload(allNodes, groups, phases, tagRegistry, ownerRegistry, meta, edgePathTypes);
         const writable = await handle.createWritable();
@@ -290,8 +290,8 @@ export function Header() {
     if (window.showSaveFilePicker) {
       try {
         const handle = await window.showSaveFilePicker({
-          suggestedName: currentFileName ?? 'flowgraph.json',
-          types: [{ description: 'FlowGraph JSON', accept: { 'application/json': ['.json'] } }],
+          suggestedName: currentFileName ?? 'tgraph.json',
+          types: [{ description: 'GRAPH JSON', accept: { 'application/json': ['.json'] } }],
         });
         const writable = await handle.createWritable();
         await writable.write(json);
@@ -306,7 +306,7 @@ export function Header() {
       }
     } else {
       // Fallback: download with a user-chosen name via prompt
-      const name = window.prompt('Enter a filename for the saved file:', currentFileName ?? 'flowgraph.json');
+      const name = window.prompt('Enter a filename for the saved file:', currentFileName ?? 'tgraph.json');
       if (!name) return;
       const safeName = name.endsWith('.json') ? name : `${name}.json`;
       exportGraphToJson(allNodes, safeName, groups, phases, tagRegistry, ownerRegistry, meta, edgePathTypes);
@@ -494,8 +494,31 @@ export function Header() {
     <header className={styles.header}>
       {/* Logo */}
       <div className={styles.logo}>
-        <div className={styles.logoIcon}>⬡</div>
-        FlowGraph
+        <div className={styles.logoIcon}>
+          <svg width="26" height="26" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="gt-bg-hdr" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#4f9eff"/>
+                <stop offset="100%" stopColor="#7b5ea7"/>
+              </linearGradient>
+            </defs>
+            {/* Octagon badge */}
+            <polygon points="9,2 23,2 30,9 30,23 23,30 9,30 2,23 2,9" fill="url(#gt-bg-hdr)"/>
+            {/* Inner depth ring */}
+            <polygon points="11,6 21,6 26,11 26,21 21,26 11,26 6,21 6,11"
+                     fill="none" stroke="rgba(255,255,255,0.13)" strokeWidth="1"/>
+            {/* GT monogram — fused at (12,10) and (18,17) */}
+            <g stroke="white" strokeLinecap="round" strokeLinejoin="round" fill="none">
+              <path d="M 12 10 C 5 10 5 22 12 22 L 12 17 L 18 17" strokeWidth="2.3"/>
+              <line x1="12" y1="10" x2="24" y2="10" strokeWidth="2.3"/>
+              <line x1="18" y1="10" x2="18" y2="24" strokeWidth="2.3"/>
+            </g>
+            {/* Node dots at key junctions */}
+            <circle cx="12" cy="10" r="2" fill="white" opacity="0.95"/>
+            <circle cx="18" cy="24" r="2" fill="white" opacity="0.95"/>
+          </svg>
+        </div>
+        <span className={styles.logoText}>RAPH</span>
       </div>
       <div className={styles.sep} />
 
@@ -772,7 +795,7 @@ export function Header() {
         {/* User guide */}
         <button
           className={styles.btnIcon}
-          title="How to use FlowGraph (Shift+?)"
+          title="How to use GRAPH (Shift+?)"
           onClick={() => setGuidePulse((n) => n + 1)}
         >📖</button>
 

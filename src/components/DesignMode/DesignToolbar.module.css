@@ -76,10 +76,11 @@
   flex-direction: column;
   gap: 4px;
   padding: 8px;
-  background: rgba(34,211,238,.07);
-  border: 1px solid #22d3ee;
+  background: rgba(8, 14, 24, 0.88);
+  border: 1px solid rgba(34,211,238,.45);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0,0,0,.35);
+  box-shadow: 0 4px 24px rgba(0,0,0,.65), inset 0 1px 0 rgba(34,211,238,.12);
+  backdrop-filter: blur(12px);
   z-index: 155;
   white-space: nowrap;
   animation: fadeIn .15s ease;

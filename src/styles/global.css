@@ -779,9 +779,10 @@ body {
 
 /* Parent-class dimming — single DOM write on #graph-content, CSS handles all descendants.
    Avoids per-element JS mutations for non-chain nodes and edges.
-   data-selected="true" exempts the currently selected node so it stays fully visible. */
-#graph-root.critical-path-dim-mode .node-group:not([data-critical-role="member"]):not([data-selected="true"]),
-#graph-root.critical-path-dim-mode .group-overlay:not([data-critical-role="member"]):not([data-selected="true"]) {
+   data-selected="true" exempts the selected node; data-selected-neighbor="true" exempts its
+   1-hop neighbors so the surrounding context stays visible. */
+#graph-root.critical-path-dim-mode .node-group:not([data-critical-role="member"]):not([data-selected="true"]):not([data-selected-neighbor="true"]),
+#graph-root.critical-path-dim-mode .group-overlay:not([data-critical-role="member"]):not([data-selected="true"]):not([data-selected-neighbor="true"]) {
   opacity: 0.07;
   transition: opacity 0.2s ease;
 }

@@ -16,7 +16,12 @@
       "mcp__code-review-graph__get_impact_radius_tool",
       "mcp__code-review-graph__get_architecture_overview_tool",
       "mcp__code-review-graph__get_affected_flows_tool",
-      "Bash(npx tsx *)"
+      "Bash(npx tsx *)",
+      "WebFetch(domain:github.com)",
+      "PowerShell(irm https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.ps1 | iex)",
+      "PowerShell($tmpFile = \"$env:TEMP\\\\caveman_install.ps1\"; Invoke-WebRequest -Uri \"https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.ps1\" -OutFile $tmpFile; & $tmpFile)",
+      "Read(//c/Users/gtran/.claude/hooks/**)",
+      "Bash(node -e \"const s=require\\('C:/Users/gtran/.claude/settings.json'\\); console.log\\(JSON.stringify\\(s.hooks, null, 2\\)\\)\")"
     ]
   },
   "model": "sonnet",
